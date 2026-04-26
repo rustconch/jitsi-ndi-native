@@ -1,0 +1,13 @@
+This archive is intended as a file-replacement patch.
+
+Use either:
+1) Copy CMakeLists.txt from this archive to:
+   D:\MEDIA\Desktop\jitsi-ndi-native\CMakeLists.txt
+
+or:
+2) Run apply_cmake_patch.ps1 from PowerShell.
+
+The replacement keeps this link line:
+   target_link_libraries(jitsi-ndi-native PRIVATE avcodec avutil swscale swresample)
+
+Do not install ffmpeg[avutil] through vcpkg: avutil is a library to link, not a vcpkg feature.
