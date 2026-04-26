@@ -9,3 +9,4 @@ last_jitsi_offer.sdp
 last_jitsi_answer.sdp
 *.rtp
 *.log
+run.log
