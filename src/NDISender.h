@@ -2,6 +2,7 @@
 
 #include "TestPattern.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -12,10 +13,14 @@ public:
 
     bool start();
     void stop();
-    bool sendFrame(const VideoFrameBGRA& frame, int fpsNumerator = 30, int fpsDenominator = 1);
+    bool sendFrame(const VideoFrameBGRA& frame, int fpsNum, int fpsDen);
 
 private:
     std::string sourceName_;
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    bool started_ = false;
+    std::uint64_t sentFrames_ = 0;
+
+#if JNN_HAS_NDI
+    void* ndiSend_ = nullptr;
+#endif
 };

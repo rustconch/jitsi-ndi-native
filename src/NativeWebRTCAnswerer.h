@@ -2,73 +2,57 @@
 
 #include "JingleSession.h"
 
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
-namespace rtc {
-class PeerConnection;
-class Track;
-}
-
-struct NativeWebRTCAnswerResult {
-    bool ok = false;
-    std::string error;
-    std::string localSdp;
-    std::string sessionAcceptXml;
-};
-
 class NativeWebRTCAnswerer {
 public:
-    using LocalCandidateCallback = std::function<void(const std::string& candidateXml)>;
+    struct IceServer {
+        std::string uri;
+    };
+
+    struct Answer {
+        std::string sdp;
+        std::string iceUfrag;
+        std::string icePwd;
+        std::string fingerprint;
+    };
+
+    using LocalCandidateCallback = std::function<void(const LocalIceCandidate&)>;
 
     NativeWebRTCAnswerer();
     ~NativeWebRTCAnswerer();
 
-    void setIceServers(std::vector<std::string> servers);
-    void setResponderJid(std::string jid);
+    NativeWebRTCAnswerer(const NativeWebRTCAnswerer&) = delete;
+    NativeWebRTCAnswerer& operator=(const NativeWebRTCAnswerer&) = delete;
 
-    NativeWebRTCAnswerResult acceptOffer(
-        const JingleSessionInitiate& session,
-        const std::string& offerSdp,
-        LocalCandidateCallback localCandidateCallback
-    );
+    void setIceServers(std::vector<IceServer> servers);
+    void setLocalCandidateCallback(LocalCandidateCallback cb);
 
-    bool addRemoteCandidatesFromTransportInfo(const std::string& xml);
+    bool createAnswer(const JingleSession& session, Answer& outAnswer);
+    void addRemoteCandidate(const LocalIceCandidate& candidate);
+    void resetSession();
 
-private:
-    struct ParsedCandidate;
-
-    void closeCurrentPeerConnection();
-    void queueOrSendLocalCandidate(const std::string& candidateLine, const std::string& mid);
-    void flushQueuedLocalCandidates();
-
-    std::string buildSessionAcceptXml(const JingleSessionInitiate& session, const std::string& localSdp) const;
-    std::string buildTransportInfoXml(const ParsedCandidate& c, const std::string& mid) const;
-
-    static std::string xmlEscape(const std::string& value);
-    static std::string extractSdpLineValue(const std::string& sdp, const std::string& prefix);
-    static bool parseCandidateLine(const std::string& candidateLine, ParsedCandidate& out);
-    static std::string attr(const std::string& tag, const std::string& name);
-    static std::string firstTag(const std::string& xml, const std::string& tagName);
+    std::uint64_t audioPackets() const { return audioPackets_; }
+    std::uint64_t videoPackets() const { return videoPackets_; }
+    std::uint64_t audioBytes() const { return audioBytes_; }
+    std::uint64_t videoBytes() const { return videoBytes_; }
 
 private:
-    std::shared_ptr<rtc::PeerConnection> pc_;
-    std::vector<std::string> iceServers_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 
-    std::string activeSid_;
-    std::string activeResponder_;
-    std::string activeInitiator_;
-    std::string activeFocusJid_;
-    std::string localUfrag_;
-    std::string localPwd_;
+    std::vector<IceServer> iceServers_;
+    LocalCandidateCallback onLocalCandidate_;
 
-    bool sessionAcceptSent_ = false;
-    mutable int transportInfoCounter_ = 1;
-
-    LocalCandidateCallback localCandidateCallback_;
-    std::vector<std::pair<std::string, std::string>> queuedLocalCandidates_;
-    std::mutex mutex_;
+    std::atomic<std::uint64_t> audioPackets_{0};
+    std::atomic<std::uint64_t> videoPackets_{0};
+    std::atomic<std::uint64_t> audioBytes_{0};
+    std::atomic<std::uint64_t> videoBytes_{0};
 };

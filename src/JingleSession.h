@@ -4,23 +4,22 @@
 #include <string>
 #include <vector>
 
-struct JinglePayloadType {
-    int id = -1;
+struct JingleCodec {
     std::string name;
-    int clockrate = 0;
+    int payloadType = -1;
+    int clockRate = 0;
     int channels = 0;
 };
 
 struct JingleCandidate {
     std::string foundation;
-    int component = 1;
+    std::string component = "1";
     std::string protocol = "udp";
-    std::uint32_t priority = 0;
+    std::string priority;
     std::string ip;
-    int port = 0;
+    std::string port;
     std::string type = "host";
-    std::string relAddr;
-    int relPort = 0;
+    std::string id;
 };
 
 struct JingleSource {
@@ -33,18 +32,18 @@ struct JingleSource {
 struct JingleContent {
     std::string name;
     std::string media;
+    std::string senders = "both";
     std::string iceUfrag;
     std::string icePwd;
     std::string fingerprintHash = "sha-256";
     std::string fingerprint;
-    std::string dtlsSetup = "actpass";
-    std::vector<JinglePayloadType> payloads;
+    std::string setup = "actpass";
+    std::vector<JingleCodec> codecs;
     std::vector<JingleCandidate> candidates;
     std::vector<JingleSource> sources;
 };
 
-struct JingleSessionInitiate {
-    bool valid = false;
+struct JingleSession {
     std::string sid;
     std::string iqId;
     std::string from;
@@ -53,13 +52,46 @@ struct JingleSessionInitiate {
     std::string region;
     std::vector<JingleContent> contents;
 
-    const JingleContent* findContent(const std::string& name) const;
-    std::string toSdpOffer() const;
-    std::string summary() const;
+    const JingleContent* contentByName(const std::string& name) const;
+    const JingleContent* audio() const { return contentByName("audio"); }
+    const JingleContent* video() const { return contentByName("video"); }
 };
 
-class JingleSessionParser {
-public:
-    static bool isSessionInitiate(const std::string& xml);
-    static JingleSessionInitiate parseSessionInitiate(const std::string& xml);
+struct LocalIceCandidate {
+    std::string mid;
+    std::string candidateLine;
+    std::string foundation;
+    std::string component = "1";
+    std::string protocol = "udp";
+    std::string priority;
+    std::string ip;
+    std::string port;
+    std::string type = "host";
 };
+
+std::string xmlEscape(const std::string& s);
+std::string xmlUnescape(std::string s);
+std::string attrValue(const std::string& tag, const std::string& attr);
+std::string findFirstTag(const std::string& xml, const std::string& tagName);
+std::vector<std::string> findTags(const std::string& xml, const std::string& tagName);
+
+bool parseJingleSessionInitiate(const std::string& xml, JingleSession& out);
+bool parseTransportInfoCandidate(const std::string& xml, LocalIceCandidate& out);
+bool parseLocalCandidateLine(const std::string& candidate, LocalIceCandidate& out);
+
+std::string buildSdpOfferFromJingle(const JingleSession& session);
+std::string buildJingleSessionAccept(
+    const JingleSession& session,
+    const std::string& responderJid,
+    const std::string& id,
+    const std::string& localIceUfrag,
+    const std::string& localIcePwd,
+    const std::string& localFingerprint);
+
+std::string buildJingleTransportInfo(
+    const std::string& to,
+    const std::string& id,
+    const std::string& sid,
+    const std::string& localIceUfrag,
+    const std::string& localIcePwd,
+    const LocalIceCandidate& cand);

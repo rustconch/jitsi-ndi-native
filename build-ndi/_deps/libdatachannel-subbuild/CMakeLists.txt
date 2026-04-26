@@ -27,7 +27,7 @@ set_property(GLOBAL PROPERTY _CMAKE_FindGit_GIT_EXECUTABLE_VERSION
 
 include(ExternalProject)
 ExternalProject_Add(libdatachannel-populate
-                     "UPDATE_DISCONNECTED" "False" "GIT_REPOSITORY" "https://github.com/paullouisageneau/libdatachannel.git" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "GIT_TAG" "master"
+                     "UPDATE_DISCONNECTED" "False" "GIT_REPOSITORY" "https://github.com/paullouisageneau/libdatachannel.git" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "GIT_TAG" "v0.24.2"
                     SOURCE_DIR          "D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-src"
                     BINARY_DIR          "D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-build"
                     CONFIGURE_COMMAND   ""

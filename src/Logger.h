@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -18,11 +19,11 @@ public:
 private:
     template <typename... Args>
     static void write(const char* level, Args&&... args) {
-        std::ostringstream oss;
-        (oss << ... << std::forward<Args>(args));
-        writeLine(level, oss.str());
+        std::ostringstream ss;
+        (ss << ... << std::forward<Args>(args));
+        writeLine(level, ss.str());
     }
 
-    static void writeLine(const char* level, const std::string& message);
+    static void writeLine(const char* level, const std::string& text);
     static std::mutex& mutex();
 };

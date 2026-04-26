@@ -7,89 +7,80 @@
 #include <Processing.NDI.Lib.h>
 #endif
 
-struct NDISender::Impl {
-#if JNN_HAS_NDI
-    NDIlib_send_instance_t sender = nullptr;
-#endif
-    bool started = false;
-};
-
-NDISender::NDISender(std::string sourceName)
-    : sourceName_(std::move(sourceName)), impl_(std::make_unique<Impl>()) {}
+NDISender::NDISender(std::string sourceName) : sourceName_(std::move(sourceName)) {}
 
 NDISender::~NDISender() {
     stop();
 }
 
 bool NDISender::start() {
-    if (impl_->started) return true;
+    if (started_) return true;
 
 #if JNN_HAS_NDI
     if (!NDIlib_initialize()) {
-        Logger::error("NDI initialize failed");
+        Logger::error("NDIlib_initialize failed");
         return false;
     }
 
-    NDIlib_send_create_t desc{};
-    desc.p_ndi_name = sourceName_.c_str();
-    desc.p_groups = nullptr;
-    desc.clock_video = false;
-    desc.clock_audio = false;
+    NDIlib_send_create_t createDesc{};
+    createDesc.p_ndi_name = sourceName_.c_str();
+    createDesc.clock_video = false;
+    createDesc.clock_audio = false;
 
-    impl_->sender = NDIlib_send_create(&desc);
-    if (!impl_->sender) {
-        Logger::error("Could not create NDI sender: ", sourceName_);
+    ndiSend_ = NDIlib_send_create(&createDesc);
+    if (!ndiSend_) {
+        Logger::error("NDIlib_send_create failed");
+        NDIlib_destroy();
         return false;
     }
 
-    impl_->started = true;
     Logger::info("Real NDI sender started: ", sourceName_);
-    return true;
 #else
-    impl_->started = true;
-    Logger::warn("Mock NDI sender started: ", sourceName_, " (NDI SDK was not linked)");
-    return true;
+    Logger::warn("Mock NDI sender started: ", sourceName_, " (JNN_HAS_NDI=0)");
 #endif
+
+    started_ = true;
+    return true;
 }
 
 void NDISender::stop() {
-    if (!impl_ || !impl_->started) return;
+    if (!started_) return;
 
 #if JNN_HAS_NDI
-    if (impl_->sender) {
-        NDIlib_send_destroy(impl_->sender);
-        impl_->sender = nullptr;
+    if (ndiSend_) {
+        NDIlib_send_destroy(static_cast<NDIlib_send_instance_t>(ndiSend_));
+        ndiSend_ = nullptr;
     }
     NDIlib_destroy();
 #endif
 
-    impl_->started = false;
+    started_ = false;
+    Logger::info("NDI sender stopped");
 }
 
-bool NDISender::sendFrame(const VideoFrameBGRA& frame, int fpsNumerator, int fpsDenominator) {
-    if (!impl_->started) return false;
+bool NDISender::sendFrame(const VideoFrameBGRA& frame, int fpsNum, int fpsDen) {
+    if (!started_) return false;
+    if (frame.width <= 0 || frame.height <= 0 || frame.pixels.empty()) return false;
 
 #if JNN_HAS_NDI
-    if (!impl_->sender || frame.pixels.empty()) return false;
+    NDIlib_video_frame_v2_t video{};
+    video.xres = frame.width;
+    video.yres = frame.height;
+    video.FourCC = NDIlib_FourCC_type_BGRA;
+    video.frame_rate_N = fpsNum;
+    video.frame_rate_D = fpsDen <= 0 ? 1 : fpsDen;
+    video.picture_aspect_ratio = static_cast<float>(frame.width) / static_cast<float>(frame.height);
+    video.frame_format_type = NDIlib_frame_format_type_progressive;
+    video.p_data = const_cast<std::uint8_t*>(frame.pixels.data());
+    video.line_stride_in_bytes = frame.stride;
 
-    NDIlib_video_frame_v2_t vf{};
-    vf.xres = frame.width;
-    vf.yres = frame.height;
-    vf.FourCC = NDIlib_FourCC_type_BGRA;
-    vf.frame_rate_N = fpsNumerator;
-    vf.frame_rate_D = fpsDenominator;
-    vf.picture_aspect_ratio = static_cast<float>(frame.width) / static_cast<float>(frame.height);
-    vf.frame_format_type = NDIlib_frame_format_type_progressive;
-    vf.timecode = NDIlib_send_timecode_synthesize;
-    vf.p_data = const_cast<std::uint8_t*>(frame.pixels.data());
-    vf.line_stride_in_bytes = frame.strideBytes;
-
-    NDIlib_send_send_video_v2(impl_->sender, &vf);
+    NDIlib_send_send_video_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &video);
 #else
-    (void)frame;
-    (void)fpsNumerator;
-    (void)fpsDenominator;
+    if ((sentFrames_ % 300) == 0) {
+        Logger::info("Mock NDI frame ", sentFrames_, " ", frame.width, "x", frame.height);
+    }
 #endif
 
+    ++sentFrames_;
     return true;
 }

@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <functional>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -10,28 +9,35 @@
 class XmppWebSocketClient {
 public:
     using MessageCallback = std::function<void(const std::string&)>;
+    using ClosedCallback = std::function<void()>;
 
-    explicit XmppWebSocketClient(std::string url);
+    XmppWebSocketClient();
     ~XmppWebSocketClient();
 
-    void onMessage(MessageCallback cb);
-    bool connect();
+    XmppWebSocketClient(const XmppWebSocketClient&) = delete;
+    XmppWebSocketClient& operator=(const XmppWebSocketClient&) = delete;
+
+    void setOnMessage(MessageCallback cb);
+    void setOnClosed(ClosedCallback cb);
+
+    bool connect(const std::string& url);
     bool sendText(const std::string& text);
     void close();
+    bool connected() const { return connected_; }
 
 private:
     void receiveLoop();
 
-    std::string url_;
     MessageCallback onMessage_;
-    std::atomic<bool> running_{false};
-    std::thread receiveThread_;
+    ClosedCallback onClosed_;
+    std::atomic<bool> connected_{false};
+    std::atomic<bool> closing_{false};
+    std::thread recvThread_;
     std::mutex sendMutex_;
 
-#ifdef _WIN32
-    void* session_ = nullptr;
-    void* connection_ = nullptr;
-    void* request_ = nullptr;
-    void* websocket_ = nullptr;
+#if defined(_WIN32)
+    void* hSession_ = nullptr;
+    void* hConnect_ = nullptr;
+    void* hWebSocket_ = nullptr;
 #endif
 };
