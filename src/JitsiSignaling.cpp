@@ -230,6 +230,42 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
         Logger::warn("MEDIA EVENT: session-initiate detected but parse failed");
         return;
     }
+	    // Нам нужна только конференц-сессия от Jicofo/JVB:
+		// room@conference.../focus.
+		// P2P session-initiate от обычного участника сбрасывает focus-сессию
+		// и оставляет нас без RTP, поэтому его явно отклоняем.
+		const bool isFocusSession =
+			session.from.find("/focus") != std::string::npos ||
+			session.initiator.find("focus@") != std::string::npos;
+
+		if (!isFocusSession) {
+			Logger::warn(
+				"MEDIA EVENT: ignoring non-focus/P2P Jingle session-initiate from=",
+				session.from,
+				" sid=",
+				session.sid
+			);
+
+			sendIqResult(session.from, session.iqId);
+
+			const std::string rejectId = makeIqId("jitsi_ndi_p2p_reject");
+			std::ostringstream reject;
+			reject
+				<< "<iq xmlns='jabber:client' type='set'"
+				<< " to='" << xmlEscape(session.from) << "'"
+				<< " id='" << xmlEscape(rejectId) << "'>"
+				<< "<jingle xmlns='urn:xmpp:jingle:1'"
+				<< " action='session-terminate'"
+				<< " sid='" << xmlEscape(session.sid) << "'>"
+				<< "<reason><decline/>"
+				<< "<text>native receiver accepts focus/JVB session only</text>"
+				<< "</reason>"
+				<< "</jingle>"
+				<< "</iq>";
+
+			sendRaw(reject.str());
+			return;
+		}
 
     Logger::info("MEDIA EVENT: Jingle session-initiate detected.");
     Logger::info("Jingle sid=", session.sid, " iq=", session.iqId, " from=", session.from,
@@ -311,9 +347,25 @@ void JitsiSignaling::flushPendingCandidates() {
     }
 
     for (auto& cand : candidates) {
-        if (cand.mid.empty()) cand.mid = "audio";
+        // libdatachannel часто возвращает mid как "0"/"1",
+        // а focus/JVB Jingle-сессия meet.jit.si использует content names
+        // "audio" и "video".
+        //
+        // Если отправить <content name='0'> в focus-сессию,
+        // Jicofo может ACK-нуть IQ, но не применить candidate к нужному transport.
+        if (cand.mid.empty() || cand.mid == "0") {
+            cand.mid = "audio";
+        } else if (cand.mid == "1") {
+            cand.mid = "video";
+        }
+
         const std::string id = makeIqId("jitsi_ndi_transport_info");
-        Logger::info("NativeWebRTCAnswerer: flushing/sending local ICE candidate as Jingle transport-info");
+
+        Logger::info(
+            "NativeWebRTCAnswerer: flushing/sending local ICE candidate as Jingle transport-info mid=",
+            cand.mid
+        );
+
         sendRaw(buildJingleTransportInfo(to, id, sid, ufrag, pwd, cand));
     }
 }
