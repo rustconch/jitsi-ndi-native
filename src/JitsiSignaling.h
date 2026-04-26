@@ -2,8 +2,8 @@
 
 #include "JingleSession.h"
 #include "NativeWebRTCAnswerer.h"
-#include "XmppWebSocketClient.h"
 #include "PerParticipantNdiRouter.h"
+#include "XmppWebSocketClient.h"
 
 #include <atomic>
 #include <cstdint>
@@ -48,13 +48,8 @@ public:
     bool connect();
     void disconnect();
 
-    std::uint64_t audioPackets() const {
-        return answerer_.audioPackets();
-    }
-
-    std::uint64_t videoPackets() const {
-        return answerer_.videoPackets();
-    }
+    std::uint64_t audioPackets() const { return answerer_.audioPackets(); }
+    std::uint64_t videoPackets() const { return answerer_.videoPackets(); }
 
 private:
     void handleXmppMessage(const std::string& xml);
@@ -64,6 +59,8 @@ private:
     void sendAnonymousAuth();
     void sendBind();
     void sendSession();
+
+    void sendConferenceRequest();
     void joinMuc();
 
     void sendIqResult(const std::string& to, const std::string& id);
@@ -71,10 +68,15 @@ private:
 
     void handleRoomMetadata(const std::string& xml);
     void handleJingleInitiate(const std::string& xml);
+    void handleJingleTransportInfo(const std::string& xml);
+    void handleJingleTerminate(const std::string& xml);
+
     void flushPendingCandidates();
 
     std::string activeDomain() const;
     std::string mucJid() const;
+    std::string bareMucJid() const;
+    std::string focusJid() const;
     std::string buildConnectUrl() const;
     std::string makeIqId(const std::string& prefix);
 
