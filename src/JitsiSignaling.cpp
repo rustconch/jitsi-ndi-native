@@ -224,53 +224,23 @@ void JitsiSignaling::handleRoomMetadata(const std::string& xml) {
     }
 }
 
-void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
+void JitsiSignaling::handleJingleInitiate(const std::string& xml)
+{
     JingleSession session;
     if (!parseJingleSessionInitiate(xml, session)) {
         Logger::warn("MEDIA EVENT: session-initiate detected but parse failed");
         return;
     }
-	    // Нам нужна только конференц-сессия от Jicofo/JVB:
-		// room@conference.../focus.
-		// P2P session-initiate от обычного участника сбрасывает focus-сессию
-		// и оставляет нас без RTP, поэтому его явно отклоняем.
-		const bool isFocusSession =
-			session.from.find("/focus") != std::string::npos ||
-			session.initiator.find("focus@") != std::string::npos;
-
-		if (!isFocusSession) {
-			Logger::warn(
-				"MEDIA EVENT: ignoring non-focus/P2P Jingle session-initiate from=",
-				session.from,
-				" sid=",
-				session.sid
-			);
-
-			sendIqResult(session.from, session.iqId);
-
-			const std::string rejectId = makeIqId("jitsi_ndi_p2p_reject");
-			std::ostringstream reject;
-			reject
-				<< "<iq xmlns='jabber:client' type='set'"
-				<< " to='" << xmlEscape(session.from) << "'"
-				<< " id='" << xmlEscape(rejectId) << "'>"
-				<< "<jingle xmlns='urn:xmpp:jingle:1'"
-				<< " action='session-terminate'"
-				<< " sid='" << xmlEscape(session.sid) << "'>"
-				<< "<reason><decline/>"
-				<< "<text>native receiver accepts focus/JVB session only</text>"
-				<< "</reason>"
-				<< "</jingle>"
-				<< "</iq>";
-
-			sendRaw(reject.str());
-			return;
-		}
 
     Logger::info("MEDIA EVENT: Jingle session-initiate detected.");
-    Logger::info("Jingle sid=", session.sid, " iq=", session.iqId, " from=", session.from,
-                 " bridge=", session.bridgeSessionId, " region=", session.region,
-                 " contents=", session.contents.size());
+    Logger::info(
+        "Jingle sid=", session.sid,
+        " iq=", session.iqId,
+        " from=", session.from,
+        " bridge=", session.bridgeSessionId,
+        " region=", session.region,
+        " contents=", session.contents.size()
+    );
 
     for (const auto& c : session.contents) {
         std::ostringstream codecs;
@@ -278,95 +248,152 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
             if (i) codecs << ",";
             codecs << c.codecs[i].name << "/" << c.codecs[i].payloadType;
         }
-        Logger::info("  ", c.name, ": codecs=", codecs.str(), " ice=", c.iceUfrag, ":*** candidates=", c.candidates.size(), " sources=", c.sources.size());
+
+        Logger::info(
+            "  ", c.name,
+            ": codecs=", codecs.str(),
+            " ice=", c.iceUfrag,
+            ":*** candidates=", c.candidates.size(),
+            " sources=", c.sources.size()
+        );
+
         for (const auto& src : c.sources) {
-            Logger::info("    ssrc=", src.ssrc, " owner=", src.owner.empty() ? "?" : src.owner, " name=", src.name);
+            Logger::info(
+                "    ssrc=", src.ssrc,
+                " owner=", src.owner.empty() ? "?" : src.owner,
+                " name=", src.name
+            );
         }
     }
 
     sendIqResult(session.from, session.iqId);
     Logger::info("MEDIA EVENT: ACK sent for Jingle session-initiate iq id=", session.iqId);
 
-	{
-		std::lock_guard lock(mutex_);
-		currentSid_ = session.sid;
-		currentFocusJid_ = session.from;
-		currentIceUfrag_.clear();
-		currentIcePwd_.clear();
-		sessionAcceptSent_ = false;
-		pendingLocalCandidates_.clear();
-	}
+    // ВАЖНО: состояние сессии задаём ДО createAnswer(),
+    // потому что libdatachannel может начать выдавать ICE candidates прямо во время createAnswer().
+    {
+        std::lock_guard lock(mutex_);
 
-	NativeWebRTCAnswerer::Answer answer;
-	if (!answerer_.createAnswer(session, answer)) {
-		Logger::error("MEDIA EVENT: native WebRTC answer creation failed");
-		return;
-	}
+        currentSid_ = session.sid;
+        currentFocusJid_ = session.from;
 
-	{
-		std::lock_guard lock(mutex_);
-		currentSid_ = session.sid;
-		currentFocusJid_ = session.from;
-		currentIceUfrag_ = answer.iceUfrag;
-		currentIcePwd_ = answer.icePwd;
-		sessionAcceptSent_ = false;
+        currentIceUfrag_.clear();
+        currentIcePwd_.clear();
 
-		// ВАЖНО:
-		// Здесь НЕ очищаем pendingLocalCandidates_.
-		// Кандидаты могли появиться во время createAnswer(),
-		// и раньше мы сами их стирали до отправки session-accept.
-	}
+        currentContentNames_.clear();
+        for (const auto& c : session.contents) {
+            if (!c.name.empty()) {
+                currentContentNames_.push_back(c.name);
+            }
+        }
+
+        if (currentContentNames_.empty()) {
+            currentContentNames_.push_back("audio");
+            currentContentNames_.push_back("video");
+        }
+
+        sessionAcceptSent_ = false;
+        pendingLocalCandidates_.clear();
+    }
+
+    NativeWebRTCAnswerer::Answer answer;
+    if (!answerer_.createAnswer(session, answer)) {
+        Logger::error("MEDIA EVENT: native WebRTC answer creation failed");
+
+        std::lock_guard lock(mutex_);
+        sessionAcceptSent_ = false;
+        pendingLocalCandidates_.clear();
+        currentSid_.clear();
+        currentFocusJid_.clear();
+        currentIceUfrag_.clear();
+        currentIcePwd_.clear();
+        currentContentNames_.clear();
+
+        return;
+    }
+
+    {
+        std::lock_guard lock(mutex_);
+        currentIceUfrag_ = answer.iceUfrag;
+        currentIcePwd_ = answer.icePwd;
+    }
 
     Logger::info("MEDIA EVENT: native WebRTC answer created.");
 
     const std::string acceptId = makeIqId("jitsi_ndi_session_accept");
     const std::string acceptXml = buildJingleSessionAccept(
-        session, boundJid_, acceptId, answer.iceUfrag, answer.icePwd, answer.fingerprint);
+        session,
+        boundJid_,
+        acceptId,
+        answer.iceUfrag,
+        answer.icePwd,
+        answer.fingerprint
+    );
+
     sendRaw(acceptXml);
 
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard lock(mutex_);
         sessionAcceptSent_ = true;
     }
 
     Logger::info("MEDIA EVENT: experimental Jingle session-accept sent before local transport-info.");
+
     flushPendingCandidates();
 }
 
-void JitsiSignaling::flushPendingCandidates() {
+void JitsiSignaling::flushPendingCandidates()
+{
     std::vector<LocalIceCandidate> candidates;
-    std::string to, sid, ufrag, pwd;
+    std::vector<std::string> contentNames;
+    std::string to;
+    std::string sid;
+    std::string ufrag;
+    std::string pwd;
+
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!sessionAcceptSent_) return;
+        std::lock_guard lock(mutex_);
+
+        if (!sessionAcceptSent_) {
+            return;
+        }
+
         candidates.swap(pendingLocalCandidates_);
+        contentNames = currentContentNames_;
         to = currentFocusJid_;
         sid = currentSid_;
         ufrag = currentIceUfrag_;
         pwd = currentIcePwd_;
     }
 
-    for (auto& cand : candidates) {
-        // libdatachannel часто возвращает mid как "0"/"1",
-        // а focus/JVB Jingle-сессия meet.jit.si использует content names
-        // "audio" и "video".
-        //
-        // Если отправить <content name='0'> в focus-сессию,
-        // Jicofo может ACK-нуть IQ, но не применить candidate к нужному transport.
-        if (cand.mid.empty() || cand.mid == "0") {
-            cand.mid = "audio";
-        } else if (cand.mid == "1") {
-            cand.mid = "video";
+    if (to.empty() || sid.empty() || ufrag.empty() || pwd.empty()) {
+        Logger::warn("NativeWebRTCAnswerer: cannot flush ICE candidates: active Jingle session is incomplete");
+        return;
+    }
+
+    if (contentNames.empty()) {
+        contentNames.push_back("audio");
+        contentNames.push_back("video");
+    }
+
+    for (const auto& originalCand : candidates) {
+        for (const auto& contentName : contentNames) {
+            if (contentName.empty()) {
+                continue;
+            }
+
+            LocalIceCandidate cand = originalCand;
+            cand.mid = contentName;
+
+            const std::string id = makeIqId("jitsi_ndi_transport_info");
+
+            Logger::info(
+                "NativeWebRTCAnswerer: flushing/sending local ICE candidate as Jingle transport-info mid=",
+                cand.mid
+            );
+
+            sendRaw(buildJingleTransportInfo(to, id, sid, ufrag, pwd, cand));
         }
-
-        const std::string id = makeIqId("jitsi_ndi_transport_info");
-
-        Logger::info(
-            "NativeWebRTCAnswerer: flushing/sending local ICE candidate as Jingle transport-info mid=",
-            cand.mid
-        );
-
-        sendRaw(buildJingleTransportInfo(to, id, sid, ufrag, pwd, cand));
     }
 }
 
@@ -453,11 +480,17 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
         sendIqResult(attrValue(iqTag, "from"), attrValue(iqTag, "id"));
         answerer_.resetSession();
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            sessionAcceptSent_ = false;
-            pendingLocalCandidates_.clear();
-            currentSid_.clear();
-        }
+			std::lock_guard lock(mutex_);
+
+			sessionAcceptSent_ = false;
+			pendingLocalCandidates_.clear();
+
+			currentSid_.clear();
+			currentFocusJid_.clear();
+			currentIceUfrag_.clear();
+			currentIcePwd_.clear();
+			currentContentNames_.clear();
+		}
         Logger::info("MEDIA EVENT: Jingle session-terminate ACK sent id=", attrValue(iqTag, "id"));
         return;
     }

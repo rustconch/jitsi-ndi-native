@@ -71,6 +71,7 @@ private:
     std::string currentFocusJid_;
     std::string currentIceUfrag_;
     std::string currentIcePwd_;
-    bool sessionAcceptSent_ = false;
-    std::vector<LocalIceCandidate> pendingLocalCandidates_;
+	std::vector<std::string> currentContentNames_;
+	bool sessionAcceptSent_ = false;
+	std::vector<LocalIceCandidate> pendingLocalCandidates_;
 };
