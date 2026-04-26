@@ -1,0 +1,10 @@
+[*.{kt,kts}]
+max_line_length=120
+ktlint_code_style = intellij_idea
+
+# I find trailing commas annoying
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_trailing-comma-on-declaration-site = disabled
+
+# This forbids underscores in package names, which we use
+ktlint_standard_package-name = disabled

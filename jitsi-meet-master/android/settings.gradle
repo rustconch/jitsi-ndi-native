@@ -1,0 +1,18 @@
+include ':app', ':sdk'
+
+includeBuild('../node_modules/@react-native/gradle-plugin')
+
+def autolinkingJson = file('build/generated/autolinking/autolinking.json')
+if (autolinkingJson.exists()) {
+    def json = new groovy.json.JsonSlurper().parseText(autolinkingJson.text)
+    json.dependencies.each { name, config ->
+        if (config.platforms?.android?.sourceDir) {
+
+            def projectName = name.replace('@', '').replace('/', '-')
+            def sourceDir = config.platforms.android.sourceDir
+            
+            include ":$projectName"
+            project(":$projectName").projectDir = new File(sourceDir)
+        }
+    }
+}

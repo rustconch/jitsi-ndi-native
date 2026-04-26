@@ -1,0 +1,33 @@
+classes/
+.DS_Store
+Thumbs.db
+*.iws
+jitsi.iml
+jitsi.ipr
+jitsi-local.iml
+lib/accounts.properties
+nbproject/private
+release/
+sc-bundles/
+sip-communicator.utest.bin
+*.swp
+target/
+out/
+build/
+debian/local-maven-repo/
+debian/maven-repo/
+lib/native/
+test-reports/
+.gradle/
+.settings/
+.classpath
+.project
+
+# Never actually store Google API client token. A template is already committed
+# and the token should always be generated on-the-fly.
+**/GoogleAPIClientToken.java
+
+.idea/
+!.idea/codeStyles/
+!.idea/eclipse-formatter.xml
+!.idea/vcs.xml

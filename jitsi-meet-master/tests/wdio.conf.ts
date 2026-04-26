@@ -1,0 +1,678 @@
+import AllureReporter from '@wdio/allure-reporter';
+import { multiremotebrowser } from '@wdio/globals';
+import { Buffer } from 'buffer';
+import fs from 'fs';
+import { glob } from 'glob';
+import junitReportBuilder from 'junit-report-builder';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import process from 'node:process';
+import pretty from 'pretty';
+
+import { getTestProperties, loadTestFiles } from './helpers/TestProperties';
+import { config as testsConfig } from './helpers/TestsConfig';
+import WebhookProxy from './helpers/WebhookProxy';
+import { getLogs, initLogger, logInfo, saveLogs } from './helpers/browserLogger';
+import { IContext } from './helpers/types';
+import { generateRoomName } from './helpers/utils';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const allure = require('allure-commandline');
+
+// This is deprecated without alternative (https://github.com/nodejs/node/issues/32483)
+// we need it to be able to reuse jitsi-meet code in tests
+require.extensions['.web.ts'] = require.extensions['.ts'];
+
+const chromeArgs = [
+    '--allow-insecure-localhost',
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+    '--disable-plugins',
+    '--mute-audio',
+    '--disable-infobars',
+    '--autoplay-policy=no-user-gesture-required',
+    '--auto-select-desktop-capture-source=Your Entire screen',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-setuid-sandbox',
+
+    // Avoids - "You are checking for animations on an inactive tab, animations do not run for inactive tabs"
+    // when executing waitForStable()
+    '--disable-renderer-backgrounding',
+    '--use-file-for-fake-audio-capture=tests/resources/fakeAudioStream.wav'
+];
+
+if (process.env.RESOLVER_RULES) {
+    chromeArgs.push(`--host-resolver-rules=${process.env.RESOLVER_RULES}`);
+}
+if (process.env.ALLOW_INSECURE_CERTS === 'true') {
+    chromeArgs.push('--ignore-certificate-errors');
+}
+if (process.env.HEADLESS === 'true') {
+    chromeArgs.push('--headless');
+    chromeArgs.push('--window-size=1280,1024');
+}
+if (process.env.VIDEO_CAPTURE_FILE) {
+    chromeArgs.push(`--use-file-for-fake-video-capture=${process.env.VIDEO_CAPTURE_FILE}`);
+}
+
+const chromePreferences = {
+    'intl.accept_languages': 'en-US'
+};
+
+const specs = [
+    'specs/**/*.spec.ts'
+];
+
+/**
+ * Analyzes test files at config construction time to determine browser requirements
+ * and generate capabilities with appropriate exclusions.
+ */
+function generateCapabilitiesFromSpecs(): { capabilities: Record<string, any>; excludedSpecs: string[]; } {
+    const allSpecFiles: string[] = [];
+    const allBrowsers = [ 'p1', 'p2', 'p3', 'p4', 'p5', 'p6' ];
+    const excludedSpecs: string[] = [];
+
+    for (const pattern of specs) {
+        const matches = glob.sync(pattern, { cwd: path.join(__dirname) });
+
+        allSpecFiles.push(...matches.map(f => path.resolve(__dirname, f)));
+    }
+
+    // Load test files to populate the testProperties registry
+    loadTestFiles(allSpecFiles);
+
+    // Import TestProperties to access the populated registry
+    const { testProperties } = require('./helpers/TestProperties');
+
+    // Detect if specific spec files are targeted via --spec CLI argument (e.g. npm run test-single).
+    // When targeted, only create capabilities for the browsers those specs actually need.
+    const targetedSpecFiles: string[] = [];
+
+    for (let i = 0; i < process.argv.length; i++) {
+        if (process.argv[i] === '--spec') {
+            // Collect all consecutive non-flag arguments after --spec (wdio accepts space-separated specs).
+            let j = i + 1;
+
+            while (j < process.argv.length && !process.argv[j].startsWith('--')) {
+                process.argv[j].split(',').forEach(f => {
+                    const normalized = f.trim().replace(/\\/g, '/');
+                    // Try exact resolution first, then fall back to case-insensitive suffix matching
+                    // (macOS filesystem is case-insensitive but string comparison is not).
+                    const resolved = path.resolve(normalized);
+                    const resolvedLower = resolved.toLowerCase();
+                    const normalizedLower = normalized.toLowerCase();
+                    const match = allSpecFiles.find(sf => {
+                        const sfNormalized = sf.replace(/\\/g, '/');
+
+                        return sfNormalized === resolved.replace(/\\/g, '/')
+                            || sfNormalized.toLowerCase() === resolvedLower.replace(/\\/g, '/')
+                            || sfNormalized.toLowerCase().endsWith(`/${normalizedLower}`);
+                    });
+
+                    if (match) {
+                        targetedSpecFiles.push(match);
+                    } else {
+                        console.warn(`[wdio] --spec file not found in spec list: ${f}`);
+                    }
+                });
+                j++;
+            }
+            i = j - 1;
+        }
+    }
+
+    console.log(`[wdio] process.argv: ${process.argv.join(' ')}`);
+    console.log(`[wdio] targeted specs: ${targetedSpecFiles.join(', ') || '(all)'}`);
+
+    const scopedFiles = targetedSpecFiles.length > 0 ? targetedSpecFiles : allSpecFiles;
+    const requiredBrowsers = new Set<string>();
+
+    for (const file of scopedFiles) {
+        const props = testProperties[file];
+
+        if (props?.useJaas && !testsConfig.jaas.enabled) {
+            continue;
+        }
+        if (props?.usesBrowsers) {
+            props.usesBrowsers.forEach((b: string) => requiredBrowsers.add(b));
+        } else {
+            requiredBrowsers.add('p1');
+        }
+    }
+
+    // Preserve the predefined browser order; fall back to all browsers if nothing was determined.
+    const browsers = requiredBrowsers.size > 0
+        ? allBrowsers.filter(b => requiredBrowsers.has(b))
+        : allBrowsers;
+
+    // Determine which browsers need which exclusions
+    const browserExclusions: Record<string, Set<string>> = {};
+
+    browsers.forEach(b => {
+        browserExclusions[b] = new Set();
+    });
+
+    for (const file of allSpecFiles) {
+        const props = testProperties[file];
+        const relativeFile = path.relative(__dirname, file);
+
+        // If a test requires JaaS but JaaS is not configured, exclude it at the top level so no worker is created.
+        if (props?.useJaas && !testsConfig.jaas.enabled) {
+            excludedSpecs.push(relativeFile);
+            continue;
+        }
+
+        // If a test doesn't use a particular browser, add it to exclusions for that browser
+        if (props?.usesBrowsers) {
+            browsers.forEach(browser => {
+                if (!props.usesBrowsers!.includes(browser)) {
+                    browserExclusions[browser].add(relativeFile);
+                }
+            });
+        }
+    }
+
+    return {
+        capabilities: Object.fromEntries(
+            browsers.map(browser => [
+                browser,
+                {
+                    capabilities: {
+                        browserName: 'chrome',
+                        ...(browser === 'p1' && process.env.BROWSER_CHROME_BETA ? { browserVersion: 'beta' } : {}),
+                        'goog:chromeOptions': {
+                            args: chromeArgs,
+                            prefs: chromePreferences
+                        },
+                        'wdio:exclude': Array.from(browserExclusions[browser] || [])
+                    }
+                }
+            ])
+        ),
+        excludedSpecs
+    };
+}
+
+const { capabilities, excludedSpecs } = generateCapabilitiesFromSpecs();
+
+const TEST_RESULTS_DIR = 'test-results';
+
+const keepAlive: Array<any> = [];
+
+export const config: WebdriverIO.MultiremoteConfig = {
+
+    runner: 'local',
+
+    specs,
+    exclude: excludedSpecs,
+
+    maxInstances: parseInt(process.env.MAX_INSTANCES || '1', 10), // if changing check onWorkerStart logic
+
+    baseUrl: process.env.BASE_URL || 'https://alpha.jitsi.net/torture/',
+    tsConfigPath: './tsconfig.json',
+
+    // Default timeout for all waitForXXX commands.
+    waitforTimeout: 1000,
+
+    // Default timeout in milliseconds for request
+    // if browser driver or grid doesn't send response
+    connectionRetryTimeout: 30_000,
+
+    // Default request retries count
+    connectionRetryCount: 3,
+
+    framework: 'mocha',
+
+    mochaOpts: {
+        timeout: 180_000
+    },
+
+    capabilities,
+
+    // Level of logging verbosity: trace | debug | info | warn | error | silent
+    logLevel: 'trace',
+    logLevels: {
+        webdriver: 'info'
+    },
+
+    // Can be used to debug chromedriver, depends on chromedriver and wdio-chromedriver-service
+    // services: [
+    //     [ 'chromedriver', {
+    //         // Pass the --verbose flag to Chromedriver
+    //         args: [ '--verbose' ],
+    //         // Optionally, define a file to store the logs instead of stdout
+    //         logFileName: 'wdio-chromedriver.log',
+    //         // Optionally, define a directory for the log file
+    //         outputDir: 'test-results',
+    //     } ]
+    // ],
+
+    // Set directory to store all logs into
+    outputDir: TEST_RESULTS_DIR,
+
+    reporters: [
+        [ 'junit', {
+            outputDir: TEST_RESULTS_DIR,
+            outputFileFormat(options) { // optional
+                return `results-${options.cid}.xml`;
+            }
+        } ],
+        [ 'allure', {
+            // addConsoleLogs: true,
+            outputDir: `${TEST_RESULTS_DIR}/allure-results`,
+            disableWebdriverStepsReporting: true,
+            disableWebdriverScreenshotsReporting: true,
+            useCucumberStepReporter: false
+        } ]
+    ],
+
+    execArgv: [ '--stack-trace-limit=100' ],
+
+    // =====
+    // Hooks
+    // =====
+    /**
+     * Gets executed before test execution begins. At this point you can access to all global
+     * variables like `browser`. It is the perfect place to define custom commands.
+     * We have overriden this function in beforeSession to be able to pass cid as first param.
+     *
+     * @returns {Promise<void>}
+     */
+    async before(cid, _, files) {
+        if (files.length !== 1) {
+            console.warn('We expect to run a single suite, but got more than one');
+        }
+
+        const testFilePath = files[0].replace(/^file:\/\//, '');
+        const testName = path.relative('tests/specs', testFilePath)
+            .replace(/.spec.ts$/, '')
+            .replace(/\//g, '-');
+        const testProperties = await getTestProperties(testFilePath);
+
+        console.log(`Running test: ${testName} via worker: ${cid} browser instances:${multiremotebrowser.instances.length}`);
+
+        const globalAny: any = global;
+
+        globalAny.ctx = {
+            times: {}
+        } as IContext;
+        globalAny.ctx.testProperties = testProperties;
+
+        if (testProperties.useJaas && !testsConfig.jaas.enabled) {
+            globalAny.ctx.skipSuiteTests = 'JaaS is not configured';
+
+            return;
+        }
+
+        await Promise.all(multiremotebrowser.instances.map(async (instance: string) => {
+            const bInstance = multiremotebrowser.getInstance(instance);
+
+            // @ts-ignore
+            initLogger(bInstance, `${instance}-${cid}-${testName}`, TEST_RESULTS_DIR);
+
+            // setup keepalive
+            keepAlive.push(setInterval(async () => {
+                await bInstance.execute(() => console.log(`${new Date().toISOString()} keep-alive`));
+            }, 20_000));
+
+            if (bInstance.isFirefox) {
+                return;
+            }
+
+            const rpath = await bInstance.uploadFile('tests/resources/iframeAPITest.html');
+
+            // @ts-ignore
+            bInstance.iframePageBase = `file://${path.dirname(rpath)}`;
+        }));
+
+        globalAny.ctx.roomName = generateRoomName(testName);
+        console.log(`Using room name: ${globalAny.ctx.roomName}`);
+
+        if (testProperties.useWebhookProxy && testsConfig.webhooksProxy.enabled && !globalAny.ctx.webhooksProxy) {
+            const tenant = testsConfig.jaas.tenant;
+
+            if (!testProperties.useJaas) {
+                throw new Error('The test tries to use WebhookProxy without JaaS.');
+            }
+            if (!tenant) {
+                console.log(`Can not configure WebhookProxy, missing tenant in config. Skipping ${testName}.`);
+                globalAny.ctx.skipSuiteTests = 'WebHookProxy is required but not configured (missing tenant)';
+
+                return;
+            }
+
+            globalAny.ctx.webhooksProxy = new WebhookProxy(
+                `${testsConfig.webhooksProxy.url}?tenant=${tenant}&room=${globalAny.ctx.roomName}`,
+                testsConfig.webhooksProxy.sharedSecret!,
+                `${TEST_RESULTS_DIR}/webhooks-${cid}-${testName}.log`);
+            globalAny.ctx.webhooksProxy.connect();
+        }
+
+        if (testProperties.requireWebhookProxy && !globalAny.ctx.webhooksProxy) {
+            throw new Error('The test requires WebhookProxy, but it is not available.');
+        }
+    },
+
+    after() {
+        const { ctx }: any = global;
+
+        ctx?.webhooksProxy?.disconnect();
+        keepAlive.forEach(clearInterval);
+    },
+
+    async beforeSession(c, capabilities_, spec, cid) {
+        const originalBefore = c.before;
+
+        if (spec && spec.length == 1) {
+            const testFilePath = spec[0].replace(/^file:\/\//, '');
+            const testProperties = await getTestProperties(testFilePath);
+
+            if (testProperties.retry) {
+                c.specFileRetries = 1;
+                c.specFileRetriesDeferred = true;
+                c.specFileRetriesDelay = 1;
+                console.log(`Enabling retry for ${testFilePath}`);
+            }
+        } else {
+            console.log('No test file or multiple test files specified, will not enable retries');
+        }
+
+        if (!originalBefore || !Array.isArray(originalBefore) || originalBefore.length !== 1) {
+            console.warn('No before hook found or more than one found, skipping');
+
+            return;
+        }
+
+        if (originalBefore) {
+            c.before = [ async function(...args) {
+                // Call original with cid as first param, followed by original args
+                // @ts-ignore
+                return await originalBefore[0].call(c, cid, ...args);
+            } ];
+        }
+    },
+
+    /**
+     * Gets executed before the suite starts (in Mocha/Jasmine only).
+     *
+     * @param {Object} suite - Suite details.
+     */
+    beforeSuite(suite) {
+        multiremotebrowser.instances.forEach((instance: string) => {
+            logInfo(multiremotebrowser.getInstance(instance),
+                `---=== Begin ${suite.file.substring(suite.file.lastIndexOf('/') + 1)} ===---`);
+        });
+    },
+
+    /**
+     * Function to be executed before a test (in Mocha/Jasmine only).
+     *
+     * @param {Object} test - Test object.
+     * @param {Object} context - The context object.
+     */
+    beforeTest(test, context) {
+        // Extract directory to use as parent suite and describe block name as suite
+        const dirMatch = test.file.match(/.*\/tests\/specs\/([^\/]+)\//);
+        const dir = dirMatch ? dirMatch[1] : false;
+        const fileMatch = test.file.match(/.*\/tests\/specs\/(.*)/);
+        const file = fileMatch ? fileMatch[1] : false;
+
+        if (ctx.testProperties.description) {
+            AllureReporter.addDescription(ctx.testProperties.description, 'text');
+        }
+
+        if (file) {
+            AllureReporter.addLink(`https://github.com/jitsi/jitsi-meet/blob/master/tests/specs/${file}`, 'Code');
+        }
+
+        // For Allure v3: set directory as parent suite and describe block as suite
+        if (dir && test.parent) {
+            AllureReporter.addParentSuite(dir);
+            AllureReporter.addSuite(test.parent);
+        }
+
+        if (ctx.skipSuiteTests) {
+            if ((typeof ctx.skipSuiteTests) === 'string') {
+                AllureReporter.addDescription((ctx.testProperties.description || '')
+                    + '\n\nSkipped because: ' + ctx.skipSuiteTests, 'text');
+            }
+            console.log(`Skipping because: ${ctx.skipSuiteTests}`);
+
+            context.skip();
+
+            return;
+        }
+
+        multiremotebrowser.instances.forEach((instance: string) => {
+            logInfo(multiremotebrowser.getInstance(instance), `---=== Start test ${test.title} ===---`);
+        });
+    },
+
+    /**
+     * Function to be executed after a test (in Mocha/Jasmine only).
+     *
+     * @param {Object} test - Test object.
+     * @param {Object} context - Scope object the test was executed with.
+     * @param {Error}  error - Error object in case the test fails, otherwise `undefined`.
+     * @returns {Promise<void>}
+     */
+    async afterTest(test, context, { error }) {
+        multiremotebrowser.instances.forEach((instance: string) =>
+            logInfo(multiremotebrowser.getInstance(instance), `---=== End test ${test.title} ===---`));
+
+        if (error) {
+
+            // skip all remaining tests in the suite
+            ctx.skipSuiteTests = `Test "${test.title}" has failed.`;
+
+            // make sure all browsers are at the main app in iframe (if used), so we collect debug info
+            await Promise.all(multiremotebrowser.instances.map(async (instance: string) => {
+                // @ts-ignore
+                await ctx[instance]?.switchToIFrame();
+            }));
+
+            const allProcessing: Promise<any>[] = [];
+            const attachments: { content: string | Buffer; filename: string; type: string; }[] = [];
+
+            multiremotebrowser.instances.forEach((instance: string) => {
+                const bInstance = multiremotebrowser.getInstance(instance);
+
+                allProcessing.push(bInstance.takeScreenshot().then(shot => {
+                    attachments.push({
+                        filename: `${instance}-screenshot`,
+                        content: Buffer.from(shot, 'base64'),
+                        type: 'image/png' });
+                }));
+
+                // @ts-ignore
+                allProcessing.push(bInstance.execute(() => typeof APP !== 'undefined' && APP.connection?.getLogs())
+                    .then(logs =>
+                        logs && attachments.push({
+                            filename: `${instance}-debug-logs`,
+                            content: JSON.stringify(logs, null, '    '),
+                            type: 'text/plain' }))
+                    .catch(e => console.error('Failed grabbing debug logs', e)));
+
+                allProcessing.push(
+                    bInstance.execute(() => window.APP?.debugLogs?.logs?.join('\n')).then(res => {
+                        if (res) {
+                            saveLogs(bInstance, res);
+                        }
+
+                        attachments.push({
+                            filename: `${instance}-console-logs`,
+                            content: getLogs(bInstance) || '',
+                            type: 'text/plain' });
+                    }));
+
+                allProcessing.push(bInstance.getPageSource().then(source => {
+                    attachments.push({
+                        filename: `${instance}-html-source`,
+                        content: pretty(source),
+                        type: 'text/plain' });
+                }));
+            });
+
+            await Promise.allSettled(allProcessing);
+            attachments.sort(
+                (a, b) => {
+                    return a.filename < b.filename ? -1 : 1;
+                }).forEach(
+                a => {
+                    AllureReporter.addAttachment(a.filename, a.content, a.type);
+                }
+            );
+        }
+    },
+
+    /**
+     * Hook that gets executed after the suite has ended (in Mocha/Jasmine only).
+     *
+     * @param {Object} suite - Suite details.
+     * @returns {Promise<void>}
+     */
+    afterSuite(suite) {
+        multiremotebrowser.instances.forEach((instance: string) => {
+            logInfo(multiremotebrowser.getInstance(instance),
+                `---=== End ${suite.file.substring(suite.file.lastIndexOf('/') + 1)} ===---`);
+        });
+    },
+
+    /**
+     * Gets executed after a worker process has exited.
+     * Handles two crash scenarios:
+     * 1. Session DELETE timeout: JUnit reporter never flushes, leaving a zero-byte XML.
+     * 2. Session INIT timeout: JUnit reporter writes a non-empty XML but with empty name/classname,
+     *    and the allure reporter never fires (no beforeTest hook ran).
+     * In both cases, synthesise a failure entry for JUnit and allure so the crash shows up in reports.
+     */
+    onWorkerEnd(cid, exitCode, workerSpecs) {
+        if (exitCode === 0) {
+            return;
+        }
+        const xmlPath = path.join(TEST_RESULTS_DIR, `results-${cid}.xml`);
+
+        const specName = workerSpecs?.[0] ? path.basename(workerSpecs[0], '.spec.ts') : 'unknown';
+        const dirMatch = workerSpecs?.[0]?.match(/\/tests\/specs\/([^/]+)\//);
+        const dir = dirMatch ? dirMatch[1] : 'unknown';
+        const message = `Worker exited with code ${exitCode} before results were written. Test result is unknown - tests may have passed.`;
+
+        // Check whether the XML has real test content. The JUnit reporter writes a non-empty XML
+        // even for session-init failures, but the testcase has empty name/classname in that case.
+        // If real test results were written, the allure reporter will have already produced its
+        // own result files, so we skip both. If the XML is missing or has no named test cases,
+        // we need to synthesise both.
+        let xmlHasNamedTests = false;
+
+        try {
+            const xmlContent = fs.readFileSync(xmlPath, 'utf8');
+
+            xmlHasNamedTests = xmlContent.includes('name="') && !xmlContent.includes('name=""');
+        } catch {
+            // file doesn't exist — fall through and create it
+        }
+
+        if (xmlHasNamedTests) {
+            // Real test results were written; allure reporter handled this worker normally.
+            return;
+        }
+
+        const b = junitReportBuilder.newBuilder();
+
+        b.testSuite().name(specName).testCase()
+            .name('Test runner crashed')
+            .className(specName)
+            .error(message);
+        b.writeTo(xmlPath);
+
+        const allureResult = {
+            uuid: randomUUID(),
+            name: 'Test runner crashed',
+            status: 'broken',
+            statusDetails: { message },
+            stage: 'finished',
+            steps: [],
+            attachments: [],
+            parameters: [],
+            labels: [
+                { name: 'parentSuite', value: dir },
+                { name: 'suite', value: specName }
+            ],
+            links: []
+        };
+        const allurePath = path.join(TEST_RESULTS_DIR, 'allure-results', `${allureResult.uuid}-result.json`);
+
+        fs.writeFileSync(allurePath, JSON.stringify(allureResult));
+        console.log(`[onWorkerEnd] Wrote error XML and allure result for crashed worker ${cid} (spec: ${specName})`);
+    },
+
+    /**
+     * Gets executed after all workers have shut down and the process is about to exit.
+     * An error thrown in the `onComplete` hook will result in the test run failing.
+     *
+     * @returns {Promise<void>}
+     */
+    onComplete() {
+        // Clean up duplicate parentSuite labels from Allure results
+        const resultsDir = `${TEST_RESULTS_DIR}/allure-results`;
+        const resultFiles = fs.readdirSync(resultsDir).filter(f => f.endsWith('-result.json'));
+
+        resultFiles.forEach(file => {
+            const filePath = path.join(resultsDir, file);
+            const result = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+            // Keep only the LAST parentSuite label (the manual one with directory name)
+            // Remove the automatic one from WebDriverIO (describe block name)
+            const parentSuiteLabels: any[] = [];
+            const otherLabels: any[] = [];
+
+            result.labels.forEach((label: any) => {
+                if (label.name === 'parentSuite') {
+                    parentSuiteLabels.push(label);
+                } else {
+                    otherLabels.push(label);
+                }
+            });
+
+            // Keep only the last parentSuite (the directory name we manually added)
+            if (parentSuiteLabels.length > 1) {
+                result.labels = [ ...otherLabels, parentSuiteLabels[parentSuiteLabels.length - 1] ];
+                fs.writeFileSync(filePath, JSON.stringify(result));
+            }
+        });
+
+        const generation = allure([
+            'generate', `${TEST_RESULTS_DIR}/allure-results`,
+            '--clean', '--single-file',
+            '--report-dir', `${TEST_RESULTS_DIR}/allure-report`
+        ]);
+
+        return new Promise<void>((resolve, reject) => {
+            const generationTimeout = setTimeout(
+                () => reject(new Error('Could not generate Allure report: timed out after 60s')),
+                60_000);
+
+            // @ts-ignore
+            generation.on('exit', eCode => {
+                clearTimeout(generationTimeout);
+
+                if (eCode !== 0) {
+                    return reject(new Error(`Could not generate Allure report: allure exited with code ${eCode}`));
+                }
+
+                console.log('Allure report successfully generated');
+
+                // An ugly hack to sort by test order by default in the allure report.
+                const content = fs.readFileSync(`${TEST_RESULTS_DIR}/allure-report/index.html`, 'utf8');
+                const modifiedContent = content.replace('<body>',
+                    '<body><script>localStorage.setItem("ALLURE_REPORT_SETTINGS_SUITES", \'{"treeSorting":{"sorter":"sorter.order","ascending":true}}\')</script>'
+                );
+
+                fs.writeFileSync(`${TEST_RESULTS_DIR}/allure-report/index.html`, modifiedContent);
+
+                resolve();
+            });
+        });
+    }
+} as WebdriverIO.MultiremoteConfig;

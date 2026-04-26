@@ -1,0 +1,470 @@
+name: CI with CMake and Maven
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+env:
+  # Java version to use for the release
+  RELEASE_JAVA_VERSION: 11
+
+concurrency:
+  group: $GITHUB_REF
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Prepare version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      create_tag: ${{ steps.version.outputs.create_tag }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4
+        with:
+          java-version: ${{ env.RELEASE_JAVA_VERSION }}
+          distribution: temurin
+
+      # don't use the setup-java cache option as this only caches what is
+      # necessary for the version, not the other jobs
+      - name: Cache local Maven repository
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-version-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-version-
+
+      - name: Parse and set version
+        id: version
+        run: |
+          MVNVER=`mvn help:evaluate -Dexpression=project.version -q -DforceStdout`
+          if [ "$GITHUB_REF" == "refs/heads/master" ]; then
+            TAG_NAME="v${MVNVER/-SNAPSHOT/}"
+            if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1
+            then
+              echo "Creating tag $TAG_NAME"
+              git config --local user.name "$GITHUB_ACTOR via GitHub Actions"
+              git config --local user.email "actions@github.com"
+              git tag -a "$TAG_NAME" -m "Tagged automatically by GitHub Actions ${{ github.workflow }}"
+              echo "create_tag=true" >> $GITHUB_OUTPUT
+            else
+              echo "Tag: $TAG_NAME already exists"
+              echo "create_tag=false" >> $GITHUB_OUTPUT
+            fi
+            VERSION=`git describe --match "v[0-9\.]*" --long --always`
+            VERSION=${VERSION:1}
+          else
+            echo "Not on master"
+            echo "create_tag=false" >> $GITHUB_OUTPUT
+            VERSION=${MVNVER}
+          fi
+          echo "Version: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+  javatest:
+    name: Java ${{ matrix.java }} Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [ 11, 17, 21 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          submodules: false
+
+      - name: Install Java ${{ matrix.java }}
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: temurin
+          cache: maven
+
+      - name: Verify Java
+        run: mvn -B verify -DperformRelease=true
+
+      - name: Upload JNI headers
+        if: matrix.java == env.RELEASE_JAVA_VERSION
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: jni_headers
+          path: target/native
+
+  ubuntu:
+    name: Linux Static Natives ${{ matrix.arch }}
+    runs-on: ubuntu-22.04
+    needs: javatest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - "x86"
+          - "x86-64"
+          - "arm64"
+          - "ppc64el"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Get JNI headers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: jni_headers
+          path: target/native
+
+      - name: Install packages for native build
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if [ "${{ matrix.arch }}" != "x86" ] && [ "${{ matrix.arch }}" != "x86-64" ]; then
+            sudo cp -f resources/ubuntu-build-image/ports-sources.list /etc/apt/sources.list
+          fi
+          sudo ./resources/ubuntu-build-image/packages.sh ${{ matrix.arch }} ${{ env.RELEASE_JAVA_VERSION }}
+
+      - name: Build natives ${{ matrix.arch }}
+        run: ./resources/ubuntu-build-image/build-static.sh ${{ matrix.arch }} ${{ env.RELEASE_JAVA_VERSION }} "$(pwd)"
+
+      - name: Upload Linux ${{ matrix.arch }} natives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: src/main/resources/linux-*/*
+
+  deb:
+    name: ${{ matrix.dist.dist }} ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - javatest
+    strategy:
+      fail-fast: false
+      matrix:
+        dist:
+          - { vendor: ubuntu, dist: jammy }
+          - { vendor: ubuntu, dist: noble }
+          - { vendor: ubuntu, dist: plucky }
+          - { vendor: debian, dist: bookworm }
+        arch:
+          - amd64
+          - arm64
+          - ppc64el
+        include: [
+          { dist: { vendor: debian, dist: bookworm }, arch: i386 },
+        ]
+
+    env:
+      UBUNTUTOOLS_UBUNTU_MIRROR: http://azure.archive.ubuntu.com/ubuntu
+      UBUNTUTOOLS_DEBIAN_MIRROR: http://debian-archive.trafficmanager.net/debian/
+      UBUNTUTOOLS_DEBSEC_MIRROR: http://debian-archive.trafficmanager.net/debian-security
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Get JNI headers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: jni_headers
+          path: target/native
+
+      # don't use the setup-java cache option as this only caches what is
+      # necessary for the version, not the other jobs
+      - name: Cache local Maven repository
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-version-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-version-
+
+      - name: Install tools
+        run: |
+          # No need for updated man pages on GitHub
+          sudo rm /var/lib/man-db/auto-update
+          resources/deb-prepare.sh
+
+      - name: Import GPG key
+        env:
+          GPG_PASSPHRASE: "${{ secrets.GPG_PW }}"
+        run: |
+          cat <(echo -e "${{ secrets.GPG_KEY }}") | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
+
+      - name: Build deb package
+        # the user executing sbuild needs to be in the group sbuild, a relogin is not possible here
+        shell: /usr/bin/sg sbuild -c "/usr/bin/bash -e {0}"
+        env:
+          GPG_PASSPHRASE: "${{ secrets.GPG_PW }}"
+        run: |
+          resources/deb-build.sh \
+            "${{ needs.version.outputs.version }}" \
+            "${{ matrix.dist.dist }}" \
+            "${{ matrix.arch }}" \
+            "dev+maven@jitsi.org"
+
+      - name: Upload package as artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: ${{ matrix.dist.vendor }}-${{ matrix.dist.dist }}-${{ matrix.arch }}
+          path: target/debian/${{ matrix.dist.dist }}/*
+
+  windows:
+    name: Windows Natives ${{ matrix.arch.actions }}
+    runs-on: windows-latest
+    needs: javatest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          #- { actions: x86, cmake: Win32, java: "x86" }
+          - { actions: x64, cmake: x64, java: "x86-64" }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Get JNI headers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: jni_headers
+          path: target/native
+
+      - name: Install Java ${{ env.RELEASE_JAVA_VERSION }}
+        id: install_java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.RELEASE_JAVA_VERSION }}
+          architecture: ${{ matrix.arch.actions }}
+
+      - name: Build natives
+        run: |
+          git config --global user.email "jitsi-jenkins@jitsi.org"
+          git config --global user.name "Jitsi GitHub Action"
+          cd $Env:GITHUB_WORKSPACE/src/native/
+          $java_home = "${{ steps.install_java.outputs.path }}".Replace("\\", "/")
+          cmake -B cmake-build-${{ matrix.arch.actions }} -DVCPKG_TARGET_TRIPLET=${{ matrix.arch.cmake }}-windows-static -A ${{ matrix.arch.cmake }} -DJAVA_HOME=$java_home
+          cmake --build cmake-build-${{ matrix.arch.actions }} --config Release --target install --parallel
+
+      - name: Gather logs on failure
+        if: ${{ failure() }}
+        run: |
+          Compress-Archive -Path $Env:GITHUB_WORKSPACE/src/native/cmake-build-${{ matrix.arch.actions }} -DestinationPath $Env:GITHUB_WORKSPACE/target/debug-logs.zip
+          Compress-Archive -Path $Env:GITHUB_WORKSPACE/src/native/vcpkg/buildtrees -DestinationPath $Env:GITHUB_WORKSPACE/target/debug-vcpkg.zip
+
+      - name: Upload Debug logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: win32-debug-${{ matrix.arch.java }}
+          path: target/debug*
+
+      - name: Upload Windows ${{ matrix.arch.actions }} natives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: win32-${{ matrix.arch.java }}
+          path: src/main/resources/win32-*/*
+
+  mac:
+    name: Mac Natives ${{ matrix.arch }}
+    runs-on: macos-latest
+    needs: javatest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86_64
+          - arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Get JNI headers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: jni_headers
+          path: target/native
+
+      - name: Install Java
+        id: install_java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4
+        with:
+          distribution: zulu
+          java-version: ${{ env.RELEASE_JAVA_VERSION }}
+          architecture: ${{ matrix.arch }}
+
+      - name: Build natives
+        run: |
+          git config --global user.email "dev@jitsi.org"
+          git config --global user.name "Jitsi GitHub Action"
+          brew install nasm autoconf automake libtool
+          resources/mac-cmake.sh ${{ steps.install_java.outputs.path }} ${{ matrix.arch }}
+
+      - name: The job has failed
+        if: ${{ failure() }}
+        run: tar --exclude *.o -cvJf target/debug-logs.tar.xz src/native/cmake-build-${{ matrix.arch }}
+
+      - name: Upload Debug logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: darwin-debug-${{ matrix.arch }}
+          path: target/debug*
+
+      - name: Upload Mac natives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: darwin-${{ matrix.arch }}
+          path: src/main/resources/darwin-*/*
+
+  multiplatform:
+    name: Multiplatform Jar
+    runs-on: ubuntu-latest
+    needs:
+      - javatest
+      - version
+      - ubuntu
+      - windows
+      - mac
+      - deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Install Java ${{ env.RELEASE_JAVA_VERSION }}
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4
+        with:
+          java-version: ${{ env.RELEASE_JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+          server-id: ossrh
+          server-username: SONATYPE_USER
+          server-password: SONATYPE_PW
+
+      - name: Download binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          path: target
+
+      - name: Copy natives for Maven
+        run: |
+          BASEDIR=$(pwd)/src/main/resources
+          mkdir -p $BASEDIR
+          cd target
+          for dist in */*/ ; do
+            last_dir=$(basename $dist)
+            if [[ "$last_dir" =~ ^(linux|darwin|win32) ]]; then
+              mkdir -p "$BASEDIR/$last_dir" || true
+              cp "$dist"/*.{so,dylib,dll} "$BASEDIR/$last_dir" || true
+            fi;
+          done;
+
+      - name: Release to Maven Central
+        if: github.ref == 'refs/heads/master'
+        env:
+          SONATYPE_USER: ${{ secrets.SONATYPE_USER_2 }}
+          SONATYPE_PW: ${{ secrets.SONATYPE_PW_2 }}
+        run: |
+          cat <(echo -e "${{ secrets.GPG_KEY }}") | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
+          mvn -B versions:set -DnewVersion=${{ needs.version.outputs.version }} -DgenerateBackupPoms=false
+          mvn \
+            --no-transfer-progress \
+            --batch-mode \
+            -Dgpg.passphrase="${{ secrets.GPG_PW }}" \
+            -DperformRelease=true \
+            -Drelease=true \
+            -Dosgi-native=true \
+            -DskipTests \
+            deploy
+
+      - name: Package on PR
+        if: github.ref != 'refs/heads/master'
+        run: |
+          mvn -B versions:set -DnewVersion=${{ needs.version.outputs.version }} -DgenerateBackupPoms=false
+          mvn \
+            --no-transfer-progress \
+            --batch-mode \
+            -Dgpg.skip \
+            -DperformRelease=true \
+            -Drelease=true \
+            -Dosgi-native=true \
+            -DskipTests \
+            package
+
+      - name: Upload Multi-Platform Jar
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: jar
+          path: target/*.jar
+          if-no-files-found: error
+
+      - name: Pack all debs to avoid Github filename mangling
+        run: |
+          tar -cvf debian-releases.tar target/{debian-*,ubuntu-*}/*
+
+      - name: Create release
+        if: github.ref == 'refs/heads/master'
+        # v1.16.0
+        uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174
+        with:
+          artifacts: "target/*.jar,debian-releases.tar"
+          allowUpdates: true
+          prerelease: true
+          draft: false
+          tag: r${{ needs.version.outputs.version }}
+          omitBody: true
+          removeArtifacts: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifactErrorsFailBuild: true
+
+      - name: Tag
+        if: needs.version.outputs.create_tag == 'true'
+        run: |
+          git config --local user.name "$GITHUB_ACTOR via GitHub Actions"
+          git config --local user.email "actions@github.com"
+          git tag -a "${{ needs.version.outputs.tag_name }}" -m "Tagged automatically by GitHub Actions ${{ github.workflow }}"
+          git push origin "${{ needs.version.outputs.tag_name }}"
+
+  deploy:
+    name: Deploy Debian packages
+    if: github.ref == 'refs/heads/master'
+    needs:
+      - version
+      - multiplatform
+      - deb
+    uses: ./.github/workflows/deploy-debian.yml
+    with:
+      release_type: unstable
+      tag: r${{ needs.version.outputs.version }}
+    secrets: inherit
