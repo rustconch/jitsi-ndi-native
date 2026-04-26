@@ -764,11 +764,13 @@ bool parseLocalCandidateLine(const std::string& candidate, LocalIceCandidate& ou
 std::string buildSdpOfferFromJingle(const JingleSession& session) {
     std::ostringstream sdp;
 
-    const JingleContent* audio = session.audio();
-    const JingleContent* video = session.video();
-
-    const bool hasAudio = audio && !supportedPayloadTypesForContent(*audio).empty();
-    const bool hasVideo = video && !supportedPayloadTypesForContent(*video).empty();
+    const JingleContent* transportRef = session.contentByName("audio");
+    if (!transportRef) {
+        transportRef = session.contentByName("video");
+    }
+    if (!transportRef && !session.contents.empty()) {
+        transportRef = &session.contents.front();
+    }
 
     sdp << "v=0\r\n";
     sdp << "o=- 0 0 IN IP4 127.0.0.1\r\n";
@@ -776,31 +778,158 @@ std::string buildSdpOfferFromJingle(const JingleSession& session) {
     sdp << "t=0 0\r\n";
 
     sdp << "a=group:BUNDLE";
-
-    if (hasAudio) {
-        sdp << " audio";
+    for (const auto& c : session.contents) {
+        if (!c.name.empty()) {
+            sdp << " " << c.name;
+        }
     }
+    sdp << " data\r\n";
 
-    if (hasVideo) {
-        sdp << " video";
-    }
-
-    sdp << "\r\n";
     sdp << "a=msid-semantic: WMS *\r\n";
 
-    if (hasAudio) {
-        appendMediaSectionSdp(sdp, *audio);
+    for (const auto& c : session.contents) {
+        std::vector<int> pts;
+
+        for (const auto& codec : c.codecs) {
+            const std::string codecNameLower = toLower(codec.name);
+
+            if (c.name == "audio" || c.media == "audio") {
+                if (codecNameLower != "opus") {
+                    continue;
+                }
+            } else if (c.name == "video" || c.media == "video") {
+                if (codecNameLower != "vp8") {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            if (codec.payloadType >= 0) {
+                pts.push_back(codec.payloadType);
+            }
+        }
+
+        if (pts.empty()) {
+            Logger::warn("JingleSession: no supported payload types for content name=", c.name);
+            continue;
+        }
+
+        sdp << "m=" << c.name << " 9 UDP/TLS/RTP/SAVPF";
+        for (int pt : pts) {
+            sdp << " " << pt;
+        }
+        sdp << "\r\n";
+
+        sdp << "c=IN IP4 0.0.0.0\r\n";
+        sdp << "a=mid:" << c.name << "\r\n";
+
+        // This SDP is used as REMOTE offer for libdatachannel.
+        // JVB is the sender, we are the receiver.
+        sdp << "a=sendonly\r\n";
+
+        sdp << "a=rtcp-mux\r\n";
+        sdp << "a=rtcp-rsize\r\n";
+
+        if (!c.iceUfrag.empty()) {
+            sdp << "a=ice-ufrag:" << c.iceUfrag << "\r\n";
+        }
+        if (!c.icePwd.empty()) {
+            sdp << "a=ice-pwd:" << c.icePwd << "\r\n";
+        }
+        if (!c.fingerprint.empty()) {
+            sdp << "a=fingerprint:" << (c.fingerprintHash.empty() ? "sha-256" : c.fingerprintHash)
+                << " " << c.fingerprint << "\r\n";
+        }
+
+        sdp << "a=setup:actpass\r\n";
+        sdp << "a=ice-options:trickle\r\n";
+
+        if (c.name == "audio" || c.media == "audio") {
+            sdp << "a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n";
+        } else if (c.name == "video" || c.media == "video") {
+            sdp << "a=extmap:3 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n";
+        }
+
+        for (const auto& codec : c.codecs) {
+            if (std::find(pts.begin(), pts.end(), codec.payloadType) == pts.end()) {
+                continue;
+            }
+
+            appendRtpmap(sdp, codec);
+
+            const std::string codecNameLower = toLower(codec.name);
+
+            if (codecNameLower == "opus") {
+                sdp << "a=fmtp:" << codec.payloadType << " minptime=10;useinbandfec=1\r\n";
+            }
+
+            if (c.name == "video" || c.media == "video") {
+                sdp << "a=rtcp-fb:" << codec.payloadType << " nack\r\n";
+                sdp << "a=rtcp-fb:" << codec.payloadType << " nack pli\r\n";
+                sdp << "a=rtcp-fb:" << codec.payloadType << " ccm fir\r\n";
+            }
+        }
+
+        std::vector<std::uint32_t> seenSsrcs;
+
+        for (const auto& src : c.sources) {
+            if (src.ssrc == 0) {
+                continue;
+            }
+
+            if (std::find(seenSsrcs.begin(), seenSsrcs.end(), src.ssrc) != seenSsrcs.end()) {
+                continue;
+            }
+
+            seenSsrcs.push_back(src.ssrc);
+
+            const std::string cname = src.name.empty() ? std::to_string(src.ssrc) : src.name;
+            const std::string msid = src.name.empty() ? cname : src.name;
+            const std::string trackId = msid + "-track";
+
+            sdp << "a=ssrc:" << src.ssrc << " cname:" << cname << "\r\n";
+            sdp << "a=ssrc:" << src.ssrc << " msid:" << msid << " " << trackId << "\r\n";
+        }
+
+        for (const auto& cand : c.candidates) {
+            appendCandidateSdp(sdp, cand);
+        }
+
+        sdp << "a=end-of-candidates\r\n";
     }
 
-    if (hasVideo) {
-        appendMediaSectionSdp(sdp, *video);
+    if (transportRef) {
+        sdp << "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n";
+        sdp << "c=IN IP4 0.0.0.0\r\n";
+        sdp << "a=mid:data\r\n";
+        sdp << "a=sendrecv\r\n";
+
+        if (!transportRef->iceUfrag.empty()) {
+            sdp << "a=ice-ufrag:" << transportRef->iceUfrag << "\r\n";
+        }
+        if (!transportRef->icePwd.empty()) {
+            sdp << "a=ice-pwd:" << transportRef->icePwd << "\r\n";
+        }
+        if (!transportRef->fingerprint.empty()) {
+            sdp << "a=fingerprint:"
+                << (transportRef->fingerprintHash.empty() ? "sha-256" : transportRef->fingerprintHash)
+                << " " << transportRef->fingerprint << "\r\n";
+        }
+
+        sdp << "a=setup:actpass\r\n";
+        sdp << "a=ice-options:trickle\r\n";
+        sdp << "a=sctp-port:5000\r\n";
+        sdp << "a=max-message-size:262144\r\n";
+
+        for (const auto& cand : transportRef->candidates) {
+            appendCandidateSdp(sdp, cand);
+        }
+
+        sdp << "a=end-of-candidates\r\n";
     }
 
-    const std::string result = sdp.str();
-
-    Logger::info("JingleSession: synthetic SDP offer passed to libdatachannel:\n", result);
-
-    return result;
+    return sdp.str();
 }
 
 std::string buildJingleSessionAccept(
@@ -813,62 +942,136 @@ std::string buildJingleSessionAccept(
 ) {
     std::ostringstream xml;
 
-    xml
-        << "<iq xmlns='jabber:client' type='set' to='"
-        << xmlEscape(session.from)
-        << "' id='"
-        << xmlEscape(id)
-        << "'>";
+    xml << "<iq xmlns='jabber:client' type='set' to='" << xmlEscape(session.from)
+        << "' id='" << xmlEscape(id) << "'>";
 
-    xml
-        << "<jingle xmlns='urn:xmpp:jingle:1' action='session-accept' initiator='"
-        << xmlEscape(session.initiator)
-        << "' responder='"
-        << xmlEscape(responderJid)
-        << "' sid='"
-        << xmlEscape(session.sid)
-        << "'>";
+    xml << "<jingle xmlns='urn:xmpp:jingle:1' action='session-accept'";
+
+    if (!session.initiator.empty()) {
+        xml << " initiator='" << xmlEscape(session.initiator) << "'";
+    }
+
+    xml << " responder='" << xmlEscape(responderJid)
+        << "' sid='" << xmlEscape(session.sid) << "'>";
 
     xml << "<group xmlns='urn:xmpp:jingle:apps:grouping:0' semantics='BUNDLE'>";
 
-    if (session.audio()) {
-        xml << "<content name='audio'/>";
+    for (const auto& c : session.contents) {
+        if (!c.name.empty()) {
+            xml << "<content name='" << xmlEscape(c.name) << "'/>";
+        }
     }
 
-    if (session.video()) {
-        xml << "<content name='video'/>";
-    }
-
+    xml << "<content name='data'/>";
     xml << "</group>";
 
-    if (const auto* audio = session.audio()) {
-        appendMediaAcceptContentXml(
-            xml,
-            *audio,
-            localIceUfrag,
-            localIcePwd,
-            localFingerprint
-        );
+    for (const auto& c : session.contents) {
+        const bool isAudio = c.name == "audio" || c.media == "audio";
+        const bool isVideo = c.name == "video" || c.media == "video";
+
+        if (!isAudio && !isVideo) {
+            continue;
+        }
+
+        xml << "<content creator='initiator' name='" << xmlEscape(c.name) << "' senders='initiator'>";
+
+        xml << "<description xmlns='urn:xmpp:jingle:apps:rtp:1' media='"
+            << xmlEscape(isAudio ? "audio" : "video") << "'>";
+
+        bool wroteCodec = false;
+
+        for (const auto& codec : c.codecs) {
+            const std::string codecNameLower = toLower(codec.name);
+
+            if (isAudio && codecNameLower != "opus") {
+                continue;
+            }
+
+            if (isVideo && codecNameLower != "vp8") {
+                continue;
+            }
+
+            xml << "<payload-type id='" << codec.payloadType
+                << "' name='" << xmlEscape(codec.name)
+                << "' clockrate='" << codec.clockRate << "'";
+
+            if (codec.channels > 0) {
+                xml << " channels='" << codec.channels << "'";
+            }
+
+            xml << ">";
+
+            if (isAudio && codecNameLower == "opus") {
+                xml << "<parameter name='minptime' value='10'/>";
+                xml << "<parameter name='useinbandfec' value='1'/>";
+            }
+
+            if (isVideo) {
+                xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='ccm' subtype='fir'/>";
+                xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack'/>";
+                xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack' subtype='pli'/>";
+            }
+
+            xml << "</payload-type>";
+
+            wroteCodec = true;
+            break;
+        }
+
+        if (!wroteCodec) {
+            Logger::warn("JingleSession: no acceptable codec in session-accept for content=", c.name);
+        }
+
+        if (isAudio) {
+            xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' "
+                   "id='1' uri='urn:ietf:params:rtp-hdrext:ssrc-audio-level'/>";
+        } else if (isVideo) {
+            xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' "
+                   "id='3' uri='http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time'/>";
+        }
+
+        xml << "<extmap-allow-mixed xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0'/>";
+        xml << "<rtcp-mux/>";
+        xml << "</description>";
+
+        xml << "<transport xmlns='urn:xmpp:jingle:transports:ice-udp:1' "
+            << "ufrag='" << xmlEscape(localIceUfrag)
+            << "' pwd='" << xmlEscape(localIcePwd) << "'>";
+
+        xml << "<rtcp-mux/>";
+
+        xml << "<fingerprint xmlns='urn:xmpp:jingle:apps:dtls:0' "
+            << "hash='sha-256' required='true' setup='active'>"
+            << xmlEscape(localFingerprint)
+            << "</fingerprint>";
+
+        xml << "</transport>";
+        xml << "</content>";
     }
 
-    if (const auto* video = session.video()) {
-        appendMediaAcceptContentXml(
-            xml,
-            *video,
-            localIceUfrag,
-            localIcePwd,
-            localFingerprint
-        );
-    }
+    xml << "<content creator='initiator' name='data' senders='both'>";
+    xml << "<description xmlns='urn:xmpp:jingle:apps:rtp:1' media='application'>";
+    xml << "<rtcp-mux/>";
+    xml << "</description>";
 
-    xml << "</jingle>";
-    xml << "</iq>";
+    xml << "<transport xmlns='urn:xmpp:jingle:transports:ice-udp:1' "
+        << "ufrag='" << xmlEscape(localIceUfrag)
+        << "' pwd='" << xmlEscape(localIcePwd) << "'>";
 
-    const std::string result = xml.str();
+    xml << "<fingerprint xmlns='urn:xmpp:jingle:apps:dtls:0' "
+        << "hash='sha-256' required='true' setup='active'>"
+        << xmlEscape(localFingerprint)
+        << "</fingerprint>";
 
-    Logger::info("JingleSession: session-accept XML:\n", result);
+    xml << "<sctpmap xmlns='urn:xmpp:jingle:transports:dtls-sctp:1' "
+        << "number='5000' protocol='webrtc-datachannel' streams='1024'/>";
 
-    return result;
+    xml << "</transport>";
+    xml << "</content>";
+
+    xml << "</jingle></iq>";
+
+    return xml.str();
 }
 
 std::string buildJingleTransportInfo(
