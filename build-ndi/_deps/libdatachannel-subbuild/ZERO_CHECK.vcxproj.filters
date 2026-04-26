@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\247c242db44e8774a195cb9512521dab\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{195E2C98-025A-3B70-A3D4-410614CC6EAC}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

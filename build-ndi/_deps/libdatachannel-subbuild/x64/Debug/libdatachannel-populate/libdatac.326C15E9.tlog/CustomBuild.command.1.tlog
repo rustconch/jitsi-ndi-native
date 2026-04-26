@@ -1,0 +1,150 @@
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-MKDIR.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -Dcfgdir=/Debug -P D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/tmp/libdatachannel-populate-mkdirs.cmake
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-mkdir
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-DOWNLOAD.RULE
+setlocal
+cd D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE -P D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/tmp/libdatachannel-populate-gitclone.cmake
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-download
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-UPDATE.RULE
+setlocal
+cd D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-src
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -Dcan_fetch=YES -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE -P D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/tmp/libdatachannel-populate-gitupdate.cmake
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-PATCH.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-patch
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-CONFIGURE.RULE
+setlocal
+cd D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-build
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-configure
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-BUILD.RULE
+setlocal
+cd D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-build
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-build
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-INSTALL.RULE
+setlocal
+cd D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-build
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-install
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\E163387F44C37CC8BBEBD71A2D73EEA8\LIBDATACHANNEL-POPULATE-TEST.RULE
+setlocal
+cd D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-build
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E echo_append
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-test
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\1684129DF8F902DF6C4CA378718F5A99\LIBDATACHANNEL-POPULATE-COMPLETE.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -E make_directory D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/Debug
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/Debug/libdatachannel-populate-complete
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/libdatachannel-populate-prefix/src/libdatachannel-populate-stamp/Debug/libdatachannel-populate-done
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKEFILES\247C242DB44E8774A195CB9512521DAB\LIBDATACHANNEL-POPULATE.RULE
+setlocal
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild -BD:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild --check-stamp-file D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

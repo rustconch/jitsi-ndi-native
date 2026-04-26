@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-mkdir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-download.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-update.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-patch.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-configure.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-build.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-install.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\e163387f44c37cc8bbebd71a2d73eea8\libdatachannel-populate-test.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\1684129df8f902df6c4ca378718f5a99\libdatachannel-populate-complete.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\247c242db44e8774a195cb9512521dab\libdatachannel-populate.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="D:\MEDIA\Desktop\jitsi-ndi-native\build-ndi\_deps\libdatachannel-subbuild\CMakeFiles\libdatachannel-populate" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{195E2C98-025A-3B70-A3D4-410614CC6EAC}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,3 @@
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/libdatachannel-populate.dir
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/ALL_BUILD.dir
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/ZERO_CHECK.dir

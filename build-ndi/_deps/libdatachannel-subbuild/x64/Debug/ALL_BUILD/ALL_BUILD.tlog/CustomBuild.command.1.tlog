@@ -1,0 +1,10 @@
+^D:\MEDIA\DESKTOP\JITSI-NDI-NATIVE\BUILD-NDI\_DEPS\LIBDATACHANNEL-SUBBUILD\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild -BD:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild --check-stamp-file D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

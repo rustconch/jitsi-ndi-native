@@ -1,0 +1,14 @@
+# Target labels
+ libdatachannel-populate
+# Source files and their labels
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/libdatachannel-populate
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/247c242db44e8774a195cb9512521dab/libdatachannel-populate.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/1684129df8f902df6c4ca378718f5a99/libdatachannel-populate-complete.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-build.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-configure.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-download.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-install.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-mkdir.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-patch.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-test.rule
+D:/MEDIA/Desktop/jitsi-ndi-native/build-ndi/_deps/libdatachannel-subbuild/CMakeFiles/e163387f44c37cc8bbebd71a2d73eea8/libdatachannel-populate-update.rule
