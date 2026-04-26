@@ -5,7 +5,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <cstring>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -43,35 +42,11 @@ std::string extractFingerprint(const std::string& sdp) {
     return {};
 }
 
-#if JNN_WITH_NATIVE_WEBRTC
-
-void sendBridgeMessage(
-    const std::shared_ptr<rtc::DataChannel>& channel,
-    const std::string& text,
-    const std::string& label
-) {
-    if (!channel) {
-        return;
-    }
-
-    try {
-        channel->send(text);
-        Logger::info("NativeWebRTCAnswerer: sent bridge message: ", label);
-    } catch (const std::exception& e) {
-        Logger::warn("NativeWebRTCAnswerer: failed to send bridge message ", label, ": ", e.what());
-    } catch (...) {
-        Logger::warn("NativeWebRTCAnswerer: failed to send bridge message ", label, ": unknown error");
-    }
-}
-
-#endif
-
 } // namespace
 
 struct NativeWebRTCAnswerer::Impl {
 #if JNN_WITH_NATIVE_WEBRTC
     std::shared_ptr<rtc::PeerConnection> pc;
-    std::shared_ptr<rtc::DataChannel> bridgeChannel;
 #endif
 
     std::mutex mutex;
@@ -103,26 +78,15 @@ void NativeWebRTCAnswerer::setMediaPacketCallback(MediaPacketCallback cb) {
 void NativeWebRTCAnswerer::resetSession() {
 #if JNN_WITH_NATIVE_WEBRTC
     std::shared_ptr<rtc::PeerConnection> oldPc;
-    std::shared_ptr<rtc::DataChannel> oldBridgeChannel;
 
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
 
-        oldBridgeChannel = std::move(impl_->bridgeChannel);
         oldPc = std::move(impl_->pc);
-
-        impl_->bridgeChannel.reset();
         impl_->pc.reset();
 
         impl_->localDescriptionReady = false;
         impl_->localSdp.clear();
-    }
-
-    if (oldBridgeChannel) {
-        try {
-            oldBridgeChannel->close();
-        } catch (...) {
-        }
     }
 
     if (oldPc) {
@@ -184,84 +148,21 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     });
 
     /*
-        Jitsi Videobridge normally expects a bridge channel where the client sends:
-          - ClientHello
-          - ReceiverAudioSubscription
-          - ReceiverVideoConstraints
+        IMPORTANT:
+        Do not create a bridge datachannel here.
 
-        Without these messages, JVB may establish ICE/DTLS but still not forward RTP.
-        If this datachannel does not open, the log will make that clear and the next step
-        is adding/negotiating the Jitsi bridge channel explicitly via SDP/Jingle.
+        Previous experimental code did:
+            pc->createDataChannel("datachannel");
+
+        That caused libdatachannel to generate an extra local SDP offer after the answer:
+            local SDP description generated, type=offer
+
+        For now we need a clean receive-only media negotiation:
+            Jitsi offer -> native answer -> ICE -> RTP
+
+        The bridge channel can be added later only after audio/video RTP starts,
+        and only if it is negotiated in a Jitsi-compatible way.
     */
-    std::shared_ptr<rtc::DataChannel> bridgeChannel;
-
-    try {
-        bridgeChannel = pc->createDataChannel("datachannel");
-
-        {
-            std::lock_guard<std::mutex> lock(impl_->mutex);
-            impl_->bridgeChannel = bridgeChannel;
-        }
-
-        bridgeChannel->onOpen([bridgeChannel]() {
-            Logger::info("NativeWebRTCAnswerer: bridge datachannel opened");
-
-            sendBridgeMessage(
-                bridgeChannel,
-                R"({"colibriClass":"ClientHello"})",
-                "ClientHello"
-            );
-
-            sendBridgeMessage(
-                bridgeChannel,
-                R"({"colibriClass":"ReceiverAudioSubscription","mode":"All"})",
-                "ReceiverAudioSubscription"
-            );
-
-            sendBridgeMessage(
-                bridgeChannel,
-                R"({"colibriClass":"ReceiverVideoConstraints","lastN":-1,"defaultConstraints":{"maxHeight":720},"constraints":{},"selectedSources":[],"onStageSources":[]})",
-                "ReceiverVideoConstraints"
-            );
-        });
-
-        bridgeChannel->onClosed([]() {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed");
-        });
-
-        bridgeChannel->onError([](std::string error) {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error);
-        });
-
-        bridgeChannel->onMessage([](rtc::message_variant message) {
-            if (std::holds_alternative<std::string>(message)) {
-                Logger::info(
-                    "NativeWebRTCAnswerer: bridge datachannel text: ",
-                    std::get<std::string>(message)
-                );
-                return;
-            }
-
-            if (std::holds_alternative<rtc::binary>(message)) {
-                const auto& data = std::get<rtc::binary>(message);
-
-                std::string text;
-                text.resize(data.size());
-
-                if (!data.empty()) {
-                    std::memcpy(text.data(), data.data(), data.size());
-                }
-
-                Logger::info("NativeWebRTCAnswerer: bridge datachannel binary/text: ", text);
-            }
-        });
-
-        Logger::info("NativeWebRTCAnswerer: bridge datachannel created");
-    } catch (const std::exception& e) {
-        Logger::warn("NativeWebRTCAnswerer: could not create bridge datachannel: ", e.what());
-    } catch (...) {
-        Logger::warn("NativeWebRTCAnswerer: could not create bridge datachannel: unknown error");
-    }
 
     pc->onLocalDescription([this](rtc::Description desc) {
         const std::string sdp = std::string(desc);

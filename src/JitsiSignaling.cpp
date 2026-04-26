@@ -171,18 +171,45 @@ void JitsiSignaling::sendIqResult(const std::string& to, const std::string& id) 
 
 void JitsiSignaling::sendDiscoInfoResult(const std::string& to, const std::string& id) {
     std::ostringstream xml;
-    xml << "<iq xmlns='jabber:client' type='result' id='" << xmlEscape(id)
-        << "' to='" << xmlEscape(to) << "'>";
+
+    xml << "<iq xmlns='jabber:client' type='result'"
+        << " id='" << xmlEscape(id) << "'"
+        << " to='" << xmlEscape(to) << "'>";
+
     xml << "<query xmlns='http://jabber.org/protocol/disco#info'>";
+
     xml << "<identity category='client' type='web' name='jitsi-ndi-native'/>";
+
+    // Base Jingle / RTP.
     xml << "<feature var='urn:xmpp:jingle:1'/>";
     xml << "<feature var='urn:xmpp:jingle:apps:rtp:1'/>";
     xml << "<feature var='urn:xmpp:jingle:apps:rtp:audio'/>";
     xml << "<feature var='urn:xmpp:jingle:apps:rtp:video'/>";
     xml << "<feature var='urn:xmpp:jingle:transports:ice-udp:1'/>";
     xml << "<feature var='urn:xmpp:jingle:apps:dtls:0'/>";
+
+    // RTP extensions / feedback.
+    xml << "<feature var='urn:xmpp:jingle:apps:rtp:rtcp-fb:0'/>";
+    xml << "<feature var='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0'/>";
+
+    // ВАЖНО: SCTP datachannel.
+    // Без этого Jicofo может не добавить <content name='data'> в session-initiate.
+    xml << "<feature var='urn:xmpp:jingle:transports:dtls-sctp:1'/>";
+
+    // Jitsi-specific.
+    xml << "<feature var='http://jitsi.org/protocol/colibri'/>";
     xml << "<feature var='http://jitsi.org/protocol/source-info'/>";
-    xml << "</query></iq>";
+    xml << "<feature var='http://jitsi.org/protocol/source-names'/>";
+    xml << "<feature var='http://jitsi.org/protocol/json-encoded-sources'/>";
+    xml << "<feature var='http://jitsi.org/protocol/ssrc-rewriting'/>";
+    xml << "<feature var='http://jitsi.org/protocol/rtx'/>";
+    xml << "<feature var='http://jitsi.org/protocol/remb'/>";
+    xml << "<feature var='http://jitsi.org/protocol/tcc'/>";
+    xml << "<feature var='http://jitsi.org/protocol/receive-multiple-streams'/>";
+
+    xml << "</query>";
+    xml << "</iq>";
+
     sendRaw(xml.str());
     Logger::info("XMPP >> disco#info result sent id=", id);
 }
