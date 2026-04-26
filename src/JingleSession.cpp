@@ -1,4 +1,4 @@
-#include "JingleSession.h"
+﻿#include "JingleSession.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -252,49 +252,128 @@ bool parseLocalCandidateLine(const std::string& candidate, LocalIceCandidate& ou
 
 std::string buildSdpOfferFromJingle(const JingleSession& session) {
     std::ostringstream sdp;
+
     sdp << "v=0\r\n";
     sdp << "o=- 0 0 IN IP4 127.0.0.1\r\n";
     sdp << "s=-\r\n";
     sdp << "t=0 0\r\n";
+
     sdp << "a=group:BUNDLE";
-    for (const auto& c : session.contents) sdp << " " << c.name;
+    for (const auto& c : session.contents) {
+        if (!c.name.empty()) {
+            sdp << " " << c.name;
+        }
+    }
     sdp << "\r\n";
+
     sdp << "a=msid-semantic: WMS *\r\n";
 
     for (const auto& c : session.contents) {
         std::vector<int> pts;
+
         for (const auto& codec : c.codecs) {
-            if (c.name == "video") {
-                const std::string n = toLower(codec.name);
-                if (n != "vp8" && n != "h264") continue;
+            if (codec.payloadType < 0 || codec.name.empty()) {
+                continue;
             }
-            if (codec.payloadType >= 0) pts.push_back(codec.payloadType);
+
+            const std::string codecName = toLower(codec.name);
+
+            if (c.name == "audio") {
+                // We only want Opus audio from Jitsi.
+                if (codecName != "opus") {
+                    continue;
+                }
+            } else if (c.name == "video") {
+                // The current native pipeline is VP8-oriented.
+                // Do not let libdatachannel/answer negotiation pick AV1/VP9/H264 here.
+                if (codecName != "vp8") {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            pts.push_back(codec.payloadType);
         }
-        if (pts.empty()) continue;
+
+        if (pts.empty()) {
+            continue;
+        }
 
         sdp << "m=" << c.name << " 9 UDP/TLS/RTP/SAVPF";
-        for (int pt : pts) sdp << " " << pt;
+        for (int pt : pts) {
+            sdp << " " << pt;
+        }
         sdp << "\r\n";
+
         sdp << "c=IN IP4 0.0.0.0\r\n";
         sdp << "a=mid:" << c.name << "\r\n";
-        sdp << "a=" << (c.senders.empty() ? "sendrecv" : "sendrecv") << "\r\n";
+        sdp << "a=sendonly\r\n";
         sdp << "a=rtcp-mux\r\n";
-        sdp << "a=ice-ufrag:" << c.iceUfrag << "\r\n";
-        sdp << "a=ice-pwd:" << c.icePwd << "\r\n";
-        sdp << "a=fingerprint:" << c.fingerprintHash << " " << c.fingerprint << "\r\n";
+
+        if (!c.iceUfrag.empty()) {
+            sdp << "a=ice-ufrag:" << c.iceUfrag << "\r\n";
+        }
+
+        if (!c.icePwd.empty()) {
+            sdp << "a=ice-pwd:" << c.icePwd << "\r\n";
+        }
+
+        if (!c.fingerprint.empty()) {
+            sdp << "a=fingerprint:" << (c.fingerprintHash.empty() ? "sha-256" : c.fingerprintHash)
+                << " " << c.fingerprint << "\r\n";
+        }
+
         sdp << "a=setup:actpass\r\n";
 
         for (const auto& codec : c.codecs) {
-            if (std::find(pts.begin(), pts.end(), codec.payloadType) != pts.end()) {
-                appendRtpmap(sdp, codec);
-                if (c.name == "video") {
-                    sdp << "a=rtcp-fb:" << codec.payloadType << " nack\r\n";
-                    sdp << "a=rtcp-fb:" << codec.payloadType << " nack pli\r\n";
-                    sdp << "a=rtcp-fb:" << codec.payloadType << " ccm fir\r\n";
-                }
+            if (std::find(pts.begin(), pts.end(), codec.payloadType) == pts.end()) {
+                continue;
+            }
+
+            appendRtpmap(sdp, codec);
+
+            const std::string codecName = toLower(codec.name);
+
+            if (c.name == "audio" && codecName == "opus") {
+                sdp << "a=fmtp:" << codec.payloadType << " minptime=10;useinbandfec=1\r\n";
+            }
+
+            if (c.name == "video" && codecName == "vp8") {
+                sdp << "a=rtcp-fb:" << codec.payloadType << " nack\r\n";
+                sdp << "a=rtcp-fb:" << codec.payloadType << " nack pli\r\n";
+                sdp << "a=rtcp-fb:" << codec.payloadType << " ccm fir\r\n";
             }
         }
-        for (const auto& cand : c.candidates) appendCandidateSdp(sdp, cand);
+
+        // CRITICAL:
+        // Jitsi advertises participant media SSRCs in Jingle.
+        // libdatachannel needs those SSRCs in the SDP track description,
+        // otherwise incoming RTP packets can be treated as unknown and dropped
+        // before track->onMessage() is called.
+        for (const auto& src : c.sources) {
+            if (src.ssrc == 0) {
+                continue;
+            }
+
+            // Skip duplicate <source ssrc='...'> entries coming from ssrc-group blocks.
+            // Those usually have no name in the current simple parser.
+            if (src.name.empty()) {
+                continue;
+            }
+
+            std::string cname = src.name;
+            std::string msid = src.name;
+            std::string trackId = src.name + "-track";
+
+            sdp << "a=ssrc:" << src.ssrc << " cname:" << cname << "\r\n";
+            sdp << "a=ssrc:" << src.ssrc << " msid:" << msid << " " << trackId << "\r\n";
+        }
+
+        for (const auto& cand : c.candidates) {
+            appendCandidateSdp(sdp, cand);
+        }
+
         sdp << "a=end-of-candidates\r\n";
     }
 
@@ -321,7 +400,7 @@ std::string buildJingleSessionAccept(
     xml << "</group>";
 
     for (const auto& c : session.contents) {
-        xml << "<content creator='initiator' name='" << xmlEscape(c.name) << "' senders='both'>";
+        xml << "<content creator='initiator' name='" << xmlEscape(c.name) << "' senders='initiator'>";
         xml << "<description xmlns='urn:xmpp:jingle:apps:rtp:1' media='" << xmlEscape(c.media.empty() ? c.name : c.media) << "'>";
 
         bool wroteCodec = false;
@@ -400,3 +479,4 @@ std::string buildJingleTransportInfo(
     xml << "</transport></content></jingle></iq>";
     return xml.str();
 }
+
