@@ -1,0 +1,44 @@
+﻿<Window x:Class="Managed_NDI_Receive.MainWindow" x:Name="TheMainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase"
+        xmlns:NDI="clr-namespace:NewTek.NDI.WPF;assembly=NDIlibDotNet2"
+        Title="Managed NDI Receive Example" Height="400" Width="800">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="368*"/>
+            <ColumnDefinition Width="200"/>
+        </Grid.ColumnDefinitions>
+        <Border Background="Black" BorderBrush="Gray" BorderThickness="3" CornerRadius="8" Margin="8,16,0,16" Grid.ColumnSpan="1">
+            <NDI:ReceiveView x:Name="ReceiveViewer" ReceiverName="WPF Example"  Margin="4" ConnectedSource="{Binding ElementName=SourcesSelector, Path=SelectedItem, UpdateSourceTrigger=PropertyChanged}"/>
+        </Border>
+        <Grid Grid.Column="1" Margin="8,16" VerticalAlignment="Stretch">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="22"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="22"/>
+                <RowDefinition Height="28"/>
+            </Grid.RowDefinitions>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="{Binding ElementName=TheMainWindow, Path=FindInstance.Sources.Count, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <TextBlock Text=" NDI Sources" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </StackPanel>
+            <ListBox Name="SourcesSelector" SelectionMode="Single" ScrollViewer.VerticalScrollBarVisibility="Visible" Grid.Row="1" ItemsSource="{Binding}">
+                <ListBox.DataContext>
+                    <CollectionViewSource Source="{Binding ElementName=TheMainWindow, Path=FindInstance.Sources, UpdateSourceTrigger=PropertyChanged}" >
+                        <CollectionViewSource.SortDescriptions>
+                            <scm:SortDescription PropertyName="Name"/>
+                        </CollectionViewSource.SortDescriptions>
+                    </CollectionViewSource>
+                </ListBox.DataContext>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding Name}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Text="Volume" HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="2"/>
+            <Slider Grid.Row="3" Minimum="0.0" Maximum="1.0" Value="{Binding ElementName=ReceiveViewer, Path=Volume, UpdateSourceTrigger=PropertyChanged}"/>
+        </Grid>
+    </Grid>
+</Window>

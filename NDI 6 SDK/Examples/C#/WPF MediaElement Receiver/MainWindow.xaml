@@ -1,0 +1,11 @@
+﻿<Window x:Class="WPF_MediaElement_Receiver.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MainWindow" Height="400" Width="600">
+    <Grid>
+        <!-- If you remove the code behind and modify this line to include a source,
+                you'll have an NDI receiver in a single line of XAML
+                Example: <MediaElement Source="ndi://ComputerName/Source+Name"/> -->
+        <MediaElement x:Name="VideoMediaElement"/>
+    </Grid>
+</Window>

@@ -1,0 +1,276 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		C6ED36B81EE0BB8D008A8798 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C6ED36B71EE0BB8D008A8798 /* main.cpp */; };
+		C6ED36C61EE0D046008A8798 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C6ED36C51EE0D046008A8798 /* AudioToolbox.framework */; };
+		C6ED36C81EE0D0E8008A8798 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C6ED36C71EE0D0E8008A8798 /* CoreFoundation.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C6ED36B21EE0BB8D008A8798 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		C6ED36B41EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = NDIlib_Recv_Audio_MacPlay; sourceTree = BUILT_PRODUCTS_DIR; };
+		C6ED36B71EE0BB8D008A8798 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
+		C6ED36C51EE0D046008A8798 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		C6ED36C71EE0D0E8008A8798 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C6ED36B11EE0BB8D008A8798 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C6ED36C81EE0D0E8008A8798 /* CoreFoundation.framework in Frameworks */,
+				C6ED36C61EE0D046008A8798 /* AudioToolbox.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C6ED36AB1EE0BB8D008A8798 = {
+			isa = PBXGroup;
+			children = (
+				C6ED36B61EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */,
+				C6ED36B51EE0BB8D008A8798 /* Products */,
+				C6ED36BE1EE0BDF3008A8798 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		C6ED36B51EE0BB8D008A8798 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C6ED36B41EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C6ED36B61EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */ = {
+			isa = PBXGroup;
+			children = (
+				C6ED36B71EE0BB8D008A8798 /* main.cpp */,
+			);
+			path = NDIlib_Recv_Audio_MacPlay;
+			sourceTree = "<group>";
+		};
+		C6ED36BE1EE0BDF3008A8798 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				C6ED36C71EE0D0E8008A8798 /* CoreFoundation.framework */,
+				C6ED36C51EE0D046008A8798 /* AudioToolbox.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C6ED36B31EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C6ED36BB1EE0BB8D008A8798 /* Build configuration list for PBXNativeTarget "NDIlib_Recv_Audio_MacPlay" */;
+			buildPhases = (
+				C6ED36B01EE0BB8D008A8798 /* Sources */,
+				C6ED36B11EE0BB8D008A8798 /* Frameworks */,
+				C6ED36B21EE0BB8D008A8798 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NDIlib_Recv_Audio_MacPlay;
+			productName = NDIlib_Recv_Audio_MacPlay;
+			productReference = C6ED36B41EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C6ED36AC1EE0BB8D008A8798 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0830;
+				ORGANIZATIONNAME = "NewTek, Inc.";
+				TargetAttributes = {
+					C6ED36B31EE0BB8D008A8798 = {
+						CreatedOnToolsVersion = 8.3.2;
+						DevelopmentTeam = W8U66ET244;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = C6ED36AF1EE0BB8D008A8798 /* Build configuration list for PBXProject "NDIlib_Recv_Audio_MacPlay" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = English;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = C6ED36AB1EE0BB8D008A8798;
+			productRefGroup = C6ED36B51EE0BB8D008A8798 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C6ED36B31EE0BB8D008A8798 /* NDIlib_Recv_Audio_MacPlay */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C6ED36B01EE0BB8D008A8798 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C6ED36B81EE0BB8D008A8798 /* main.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		C6ED36B91EE0BB8D008A8798 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.12;
+				MTL_ENABLE_DEBUG_INFO = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		C6ED36BA1EE0BB8D008A8798 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.12;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		C6ED36BC1EE0BB8D008A8798 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEVELOPMENT_TEAM = W8U66ET244;
+				HEADER_SEARCH_PATHS = ../../../include;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		C6ED36BD1EE0BB8D008A8798 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEVELOPMENT_TEAM = W8U66ET244;
+				HEADER_SEARCH_PATHS = ../../../include;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C6ED36AF1EE0BB8D008A8798 /* Build configuration list for PBXProject "NDIlib_Recv_Audio_MacPlay" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C6ED36B91EE0BB8D008A8798 /* Debug */,
+				C6ED36BA1EE0BB8D008A8798 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C6ED36BB1EE0BB8D008A8798 /* Build configuration list for PBXNativeTarget "NDIlib_Recv_Audio_MacPlay" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C6ED36BC1EE0BB8D008A8798 /* Debug */,
+				C6ED36BD1EE0BB8D008A8798 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C6ED36AC1EE0BB8D008A8798 /* Project object */;
+}

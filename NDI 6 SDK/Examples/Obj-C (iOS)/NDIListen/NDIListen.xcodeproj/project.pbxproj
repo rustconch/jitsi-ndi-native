@@ -1,0 +1,404 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 50;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3300AE5B224ACB140066D28E /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 3300AE5A224ACB140066D28E /* AppDelegate.m */; };
+		3300AE5E224ACB140066D28E /* HostTableViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 3300AE5D224ACB140066D28E /* HostTableViewController.m */; };
+		3300AE61224ACB140066D28E /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3300AE5F224ACB140066D28E /* Main.storyboard */; };
+		3300AE63224ACB140066D28E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3300AE62224ACB140066D28E /* Assets.xcassets */; };
+		3300AE66224ACB140066D28E /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3300AE64224ACB140066D28E /* LaunchScreen.storyboard */; };
+		3300AE69224ACB140066D28E /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 3300AE68224ACB140066D28E /* main.m */; };
+		3300AE71224ACB310066D28E /* AppData.m in Sources */ = {isa = PBXBuildFile; fileRef = 3300AE6F224ACB310066D28E /* AppData.m */; };
+		3300AE74224AD26B0066D28E /* libndi_ios.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3300AE73224AD26B0066D28E /* libndi_ios.a */; };
+		3300AE77224AD5DB0066D28E /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 3300AE76224AD5DB0066D28E /* libc++.tbd */; };
+		3300AE79224C15190066D28E /* SourceTableViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 3300AE78224C15190066D28E /* SourceTableViewController.m */; };
+		3311EDE6224E84E40053F66B /* AudioPlayback.m in Sources */ = {isa = PBXBuildFile; fileRef = 3311EDE3224E84E40053F66B /* AudioPlayback.m */; };
+		3311EDE7224E84E40053F66B /* AudioResampler.m in Sources */ = {isa = PBXBuildFile; fileRef = 3311EDE5224E84E40053F66B /* AudioResampler.m */; };
+		334B1C0A224D65440066CF6B /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 334B1C09224D65430066CF6B /* CoreMedia.framework */; };
+		334B1C0C224D654E0066CF6B /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 334B1C0B224D654E0066CF6B /* VideoToolbox.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		3300AE56224ACB140066D28E /* NDI Listen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "NDI Listen.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3300AE59224ACB140066D28E /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
+		3300AE5A224ACB140066D28E /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
+		3300AE5C224ACB140066D28E /* HostTableViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HostTableViewController.h; sourceTree = "<group>"; };
+		3300AE5D224ACB140066D28E /* HostTableViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HostTableViewController.m; sourceTree = "<group>"; };
+		3300AE60224ACB140066D28E /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		3300AE62224ACB140066D28E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		3300AE65224ACB140066D28E /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		3300AE67224ACB140066D28E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		3300AE68224ACB140066D28E /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		3300AE6F224ACB310066D28E /* AppData.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AppData.m; sourceTree = "<group>"; };
+		3300AE70224ACB310066D28E /* AppData.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AppData.h; sourceTree = "<group>"; };
+		3300AE73224AD26B0066D28E /* libndi_ios.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libndi_ios.a; path = ../../../lib/iOS/libndi_ios.a; sourceTree = "<group>"; };
+		3300AE76224AD5DB0066D28E /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
+		3300AE78224C15190066D28E /* SourceTableViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SourceTableViewController.m; sourceTree = "<group>"; };
+		3300AE7A224C152E0066D28E /* SourceTableViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SourceTableViewController.h; sourceTree = "<group>"; };
+		3311EDE2224E84E40053F66B /* AudioPlayback.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AudioPlayback.h; sourceTree = "<group>"; };
+		3311EDE3224E84E40053F66B /* AudioPlayback.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AudioPlayback.m; sourceTree = "<group>"; };
+		3311EDE4224E84E40053F66B /* AudioResampler.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AudioResampler.h; sourceTree = "<group>"; };
+		3311EDE5224E84E40053F66B /* AudioResampler.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AudioResampler.m; sourceTree = "<group>"; };
+		334B1C09224D65430066CF6B /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+		334B1C0B224D654E0066CF6B /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3300AE53224ACB140066D28E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				334B1C0C224D654E0066CF6B /* VideoToolbox.framework in Frameworks */,
+				334B1C0A224D65440066CF6B /* CoreMedia.framework in Frameworks */,
+				3300AE77224AD5DB0066D28E /* libc++.tbd in Frameworks */,
+				3300AE74224AD26B0066D28E /* libndi_ios.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		3300AE4D224ACB140066D28E = {
+			isa = PBXGroup;
+			children = (
+				3300AE58224ACB140066D28E /* NDIListen */,
+				3300AE57224ACB140066D28E /* Products */,
+				3300AE72224AD26B0066D28E /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		3300AE57224ACB140066D28E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3300AE56224ACB140066D28E /* NDI Listen.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3300AE58224ACB140066D28E /* NDIListen */ = {
+			isa = PBXGroup;
+			children = (
+				3311EDE2224E84E40053F66B /* AudioPlayback.h */,
+				3311EDE3224E84E40053F66B /* AudioPlayback.m */,
+				3311EDE4224E84E40053F66B /* AudioResampler.h */,
+				3311EDE5224E84E40053F66B /* AudioResampler.m */,
+				3300AE70224ACB310066D28E /* AppData.h */,
+				3300AE6F224ACB310066D28E /* AppData.m */,
+				3300AE59224ACB140066D28E /* AppDelegate.h */,
+				3300AE5A224ACB140066D28E /* AppDelegate.m */,
+				3300AE5C224ACB140066D28E /* HostTableViewController.h */,
+				3300AE5D224ACB140066D28E /* HostTableViewController.m */,
+				3300AE5F224ACB140066D28E /* Main.storyboard */,
+				3300AE62224ACB140066D28E /* Assets.xcassets */,
+				3300AE64224ACB140066D28E /* LaunchScreen.storyboard */,
+				3300AE67224ACB140066D28E /* Info.plist */,
+				3300AE68224ACB140066D28E /* main.m */,
+				3300AE78224C15190066D28E /* SourceTableViewController.m */,
+				3300AE7A224C152E0066D28E /* SourceTableViewController.h */,
+			);
+			path = NDIListen;
+			sourceTree = "<group>";
+		};
+		3300AE72224AD26B0066D28E /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				334B1C0B224D654E0066CF6B /* VideoToolbox.framework */,
+				334B1C09224D65430066CF6B /* CoreMedia.framework */,
+				3300AE76224AD5DB0066D28E /* libc++.tbd */,
+				3300AE73224AD26B0066D28E /* libndi_ios.a */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3300AE55224ACB140066D28E /* NDI Listen */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3300AE6C224ACB140066D28E /* Build configuration list for PBXNativeTarget "NDI Listen" */;
+			buildPhases = (
+				3300AE52224ACB140066D28E /* Sources */,
+				3300AE53224ACB140066D28E /* Frameworks */,
+				3300AE54224ACB140066D28E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "NDI Listen";
+			productName = SimpleNDI;
+			productReference = 3300AE56224ACB140066D28E /* NDI Listen.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3300AE4E224ACB140066D28E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1010;
+				ORGANIZATIONNAME = NewTek;
+				TargetAttributes = {
+					3300AE55224ACB140066D28E = {
+						CreatedOnToolsVersion = 10.1;
+						SystemCapabilities = {
+							com.apple.BackgroundModes = {
+								enabled = 1;
+							};
+						};
+					};
+				};
+			};
+			buildConfigurationList = 3300AE51224ACB140066D28E /* Build configuration list for PBXProject "NDIListen" */;
+			compatibilityVersion = "Xcode 9.3";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 3300AE4D224ACB140066D28E;
+			productRefGroup = 3300AE57224ACB140066D28E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3300AE55224ACB140066D28E /* NDI Listen */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3300AE54224ACB140066D28E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3300AE66224ACB140066D28E /* LaunchScreen.storyboard in Resources */,
+				3300AE63224ACB140066D28E /* Assets.xcassets in Resources */,
+				3300AE61224ACB140066D28E /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3300AE52224ACB140066D28E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3300AE5E224ACB140066D28E /* HostTableViewController.m in Sources */,
+				3311EDE6224E84E40053F66B /* AudioPlayback.m in Sources */,
+				3300AE69224ACB140066D28E /* main.m in Sources */,
+				3311EDE7224E84E40053F66B /* AudioResampler.m in Sources */,
+				3300AE79224C15190066D28E /* SourceTableViewController.m in Sources */,
+				3300AE5B224ACB140066D28E /* AppDelegate.m in Sources */,
+				3300AE71224ACB310066D28E /* AppData.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		3300AE5F224ACB140066D28E /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				3300AE60224ACB140066D28E /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+		3300AE64224ACB140066D28E /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				3300AE65224ACB140066D28E /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		3300AE6A224ACB140066D28E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = c99;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 12.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+			};
+			name = Debug;
+		};
+		3300AE6B224ACB140066D28E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = c99;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = NDEBUG;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 12.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		3300AE6D224ACB140066D28E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++0x";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = W8U66ET244;
+				GCC_C_LANGUAGE_STANDARD = c99;
+				INFOPLIST_FILE = "$(SRCROOT)/NDIListen/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = ../../../lib/iOS;
+				PRODUCT_BUNDLE_IDENTIFIER = com.newtek.SimpleNDI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		3300AE6E224ACB140066D28E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++0x";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = W8U66ET244;
+				GCC_C_LANGUAGE_STANDARD = c99;
+				GCC_PREPROCESSOR_DEFINITIONS = NDEBUG;
+				"GCC_PREPROCESSOR_DEFINITIONS[arch=*]" = "";
+				INFOPLIST_FILE = "$(SRCROOT)/NDIListen/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = ../../../lib/iOS;
+				PRODUCT_BUNDLE_IDENTIFIER = com.newtek.SimpleNDI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3300AE51224ACB140066D28E /* Build configuration list for PBXProject "NDIListen" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3300AE6A224ACB140066D28E /* Debug */,
+				3300AE6B224ACB140066D28E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3300AE6C224ACB140066D28E /* Build configuration list for PBXNativeTarget "NDI Listen" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3300AE6D224ACB140066D28E /* Debug */,
+				3300AE6E224ACB140066D28E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3300AE4E224ACB140066D28E /* Project object */;
+}
