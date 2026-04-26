@@ -1,0 +1,20 @@
+В set(SOURCES ...) добавить:
+
+src/RtpPacket.cpp
+src/JitsiSourceMap.cpp
+src/Vp8RtpDepacketizer.cpp
+src/FfmpegMediaDecoder.cpp
+src/PerParticipantNdiRouter.cpp
+
+После libdatachannel/NDI блоков добавить FFmpeg. Вариант для vcpkg, если find_package сработает:
+
+find_package(FFMPEG REQUIRED COMPONENTS avcodec avutil swscale swresample)
+target_include_directories(jitsi-ndi-native PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_link_libraries(jitsi-ndi-native PRIVATE ${FFMPEG_LIBRARIES})
+
+Если не сработает, временный ручной вариант:
+
+set(FFMPEG_ROOT "D:/vcpkg/installed/x64-windows" CACHE PATH "vcpkg ffmpeg root")
+target_include_directories(jitsi-ndi-native PRIVATE "${FFMPEG_ROOT}/include")
+target_link_directories(jitsi-ndi-native PRIVATE "${FFMPEG_ROOT}/lib")
+target_link_libraries(jitsi-ndi-native PRIVATE avcodec avutil swscale swresample)

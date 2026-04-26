@@ -1,0 +1,51 @@
+Это не полный файл JitsiSignaling.cpp, а места, которые нужно добавить в текущий JitsiSignaling.
+
+1) JitsiSignaling.h:
+
+#include "PerParticipantNdiRouter.h"
+#include <memory>
+
+В JitsiSignalingConfig добавить:
+
+std::string ndiBaseName = "JitsiNDI";
+
+В private-поля JitsiSignaling добавить:
+
+std::unique_ptr<PerParticipantNdiRouter> ndiRouter_;
+
+2) В конструкторе JitsiSignaling или в connect(), до начала обработки Jingle:
+
+ndiRouter_ = std::make_unique<PerParticipantNdiRouter>(config_.ndiBaseName);
+answerer_.setMediaPacketCallback([this](const std::string& mid, const std::uint8_t* data, std::size_t size) {
+    if (ndiRouter_) ndiRouter_->handleRtp(mid, data, size);
+});
+
+3) В начале handleXmppMessage(const std::string& xml):
+
+if (ndiRouter_) {
+    if (xml.find("source-remove") != std::string::npos) {
+        ndiRouter_->removeSourcesFromJingleXml(xml);
+    } else if (xml.find("<source") != std::string::npos) {
+        ndiRouter_->updateSourcesFromJingleXml(xml);
+    }
+}
+
+4) Там, где формируется signalingConfig в main.cpp:
+
+signalingConfig.ndiBaseName = cfg.ndiName;
+
+5) main.cpp: старый тестовый NDI sender и цикл TestPattern надо убрать.
+Было:
+
+NDISender ndi(cfg.ndiName);
+...
+TestPattern pattern(cfg.width, cfg.height);
+while (g_running) { ... ndi.sendFrame(...) ... }
+
+Должно стать:
+
+while (g_running) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+}
+
+Потому что реальные NDI sources теперь создаются динамически внутри PerParticipantNdiRouter.

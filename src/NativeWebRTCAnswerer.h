@@ -3,11 +3,10 @@
 #include "JingleSession.h"
 
 #include <atomic>
-#include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -25,6 +24,7 @@ public:
     };
 
     using LocalCandidateCallback = std::function<void(const LocalIceCandidate&)>;
+    using MediaPacketCallback = std::function<void(const std::string& mid, const std::uint8_t* data, std::size_t size)>;
 
     NativeWebRTCAnswerer();
     ~NativeWebRTCAnswerer();
@@ -34,6 +34,7 @@ public:
 
     void setIceServers(std::vector<IceServer> servers);
     void setLocalCandidateCallback(LocalCandidateCallback cb);
+    void setMediaPacketCallback(MediaPacketCallback cb);
 
     bool createAnswer(const JingleSession& session, Answer& outAnswer);
     void addRemoteCandidate(const LocalIceCandidate& candidate);
@@ -50,6 +51,7 @@ private:
 
     std::vector<IceServer> iceServers_;
     LocalCandidateCallback onLocalCandidate_;
+    MediaPacketCallback onMediaPacket_;
 
     std::atomic<std::uint64_t> audioPackets_{0};
     std::atomic<std::uint64_t> videoPackets_{0};
