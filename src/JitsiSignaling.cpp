@@ -38,15 +38,27 @@ std::string extractJsonString(const std::string& json, const std::string& key) {
 
 } // namespace
 
-JitsiSignaling::JitsiSignaling(JitsiSignalingConfig config) : cfg_(std::move(config)) {
+JitsiSignaling::JitsiSignaling(JitsiSignalingConfig config)
+    : cfg_(std::move(config)) {
     answerer_.setLocalCandidateCallback([this](const LocalIceCandidate& cand) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!sessionAcceptSent_) {
-            Logger::info("NativeWebRTCAnswerer: local ICE candidate queued until session-accept is sent");
+        bool shouldFlush = false;
+
+        {
+            std::lock_guard lock(mutex_);
+
             pendingLocalCandidates_.push_back(cand);
-            return;
+
+            if (!sessionAcceptSent_ || currentSid_.empty() || currentFocusJid_.empty()) {
+                Logger::info("NativeWebRTCAnswerer: local ICE candidate queued until session-accept is sent");
+                return;
+            }
+
+            shouldFlush = true;
         }
-        pendingLocalCandidates_.push_back(cand);
+
+        if (shouldFlush) {
+            flushPendingCandidates();
+        }
     });
 }
 
@@ -239,21 +251,35 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
     sendIqResult(session.from, session.iqId);
     Logger::info("MEDIA EVENT: ACK sent for Jingle session-initiate iq id=", session.iqId);
 
-    NativeWebRTCAnswerer::Answer answer;
-    if (!answerer_.createAnswer(session, answer)) {
-        Logger::error("MEDIA EVENT: native WebRTC answer creation failed");
-        return;
-    }
+	{
+		std::lock_guard lock(mutex_);
+		currentSid_ = session.sid;
+		currentFocusJid_ = session.from;
+		currentIceUfrag_.clear();
+		currentIcePwd_.clear();
+		sessionAcceptSent_ = false;
+		pendingLocalCandidates_.clear();
+	}
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        currentSid_ = session.sid;
-        currentFocusJid_ = session.from;
-        currentIceUfrag_ = answer.iceUfrag;
-        currentIcePwd_ = answer.icePwd;
-        sessionAcceptSent_ = false;
-        pendingLocalCandidates_.clear();
-    }
+	NativeWebRTCAnswerer::Answer answer;
+	if (!answerer_.createAnswer(session, answer)) {
+		Logger::error("MEDIA EVENT: native WebRTC answer creation failed");
+		return;
+	}
+
+	{
+		std::lock_guard lock(mutex_);
+		currentSid_ = session.sid;
+		currentFocusJid_ = session.from;
+		currentIceUfrag_ = answer.iceUfrag;
+		currentIcePwd_ = answer.icePwd;
+		sessionAcceptSent_ = false;
+
+		// ВАЖНО:
+		// Здесь НЕ очищаем pendingLocalCandidates_.
+		// Кандидаты могли появиться во время createAnswer(),
+		// и раньше мы сами их стирали до отправки session-accept.
+	}
 
     Logger::info("MEDIA EVENT: native WebRTC answer created.");
 
