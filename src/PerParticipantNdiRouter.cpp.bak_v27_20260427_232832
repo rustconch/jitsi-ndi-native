@@ -1,4 +1,4 @@
-﻿#include "PerParticipantNdiRouter.h"
+#include "PerParticipantNdiRouter.h"
 
 #include "Logger.h"
 
@@ -229,85 +229,32 @@ bool PerParticipantNdiRouter::isAcceptedVp8PayloadTypeLocked(std::uint8_t payloa
 }
 
 std::string PerParticipantNdiRouter::sourceNameFor(const JitsiSourceInfo& source) const {
-    std::string label;
+    const std::string safe = JitsiSourceMap::sanitizeForNdiName(
+        source.displayName.empty()
+            ? (source.endpointId.empty() ? source.sourceName : source.endpointId)
+            : source.displayName
+    );
 
-    const std::string endpoint = source.endpointId.empty()
-        ? (source.displayName.empty() ? source.sourceName : source.displayName)
-        : source.endpointId;
-
-    const std::string videoType = toLower(source.videoType);
-
-    if (source.media == "video") {
-        // v27: camera and screen share from one participant must be separate NDI sources.
-        // Jitsi source names are stable per media source: endpoint-v0 = camera, endpoint-v1 = desktop.
-        label = !source.sourceName.empty() ? source.sourceName : endpoint;
-
-        if (videoType == "desktop" || videoType == "screen" || videoType == "screenshare") {
-            label += " screen";
-        } else if (videoType == "camera") {
-            label += " camera";
-        } else if (!videoType.empty()) {
-            label += " " + videoType;
-        } else {
-            label += " video";
-        }
-    } else if (source.media == "audio") {
-        // Keep participant audio attached to the participant camera pipeline.
-        // If audio arrives before video, this creates the same key/name that the camera will reuse later.
-        if (!endpoint.empty() && !isFallbackSsrcEndpoint(endpoint)) {
-            label = endpoint + "-v0 camera";
-        } else {
-            label = endpoint.empty() ? source.sourceName : endpoint;
-        }
-    } else {
-        label = source.displayName.empty()
-            ? (endpoint.empty() ? source.sourceName : endpoint)
-            : source.displayName;
-    }
-
-    const std::string safe = JitsiSourceMap::sanitizeForNdiName(label);
     return ndiBaseName_ + " - " + safe;
 }
+
 std::string PerParticipantNdiRouter::pipelineKeyForLocked(const JitsiSourceInfo& source) const {
-    std::string endpoint = source.endpointId.empty()
+    std::string key = source.endpointId.empty()
         ? (source.displayName.empty() ? source.sourceName : source.displayName)
         : source.endpointId;
 
-    if (endpoint.empty()) {
-        endpoint = source.displayName;
-    }
-
-    // v27: route each Jitsi video source into its own independent pipeline.
-    // This prevents camera RTP and desktop-share RTP from sharing one AV1/VP8 assembler/decoder.
-    if (source.media == "video") {
-        if (!source.sourceName.empty()) {
-            return source.sourceName;
-        }
-
-        const std::string videoType = toLower(source.videoType);
-        if (!endpoint.empty() && !videoType.empty()) {
-            return endpoint + "-" + videoType;
-        }
-
-        if (!endpoint.empty()) {
-            return endpoint + "-video";
-        }
-    }
-
-    // Audio belongs to the participant camera NDI source, not to the desktop-share source.
-    // Normal Jitsi camera source name is endpoint-v0, so this matches the video pipeline key.
-    if (source.media == "audio" && !endpoint.empty() && !isFallbackSsrcEndpoint(endpoint)) {
-        return endpoint + "-v0";
+    if (key.empty()) {
+        key = source.displayName;
     }
 
     // If audio has only an orphan SSRC key, attach it to the one already-created
-    // non-fallback sender instead of making "JitsiNDI - ssrc-..." audio-only sources.
-    if ((source.media == "audio" || endpoint.empty() || isFallbackSsrcEndpoint(endpoint)) && isFallbackSsrcEndpoint(endpoint)) {
+    // participant sender instead of making "JitsiNDI - ssrc-..." audio-only sources.
+    if ((source.media == "audio" || key.empty() || isFallbackSsrcEndpoint(key)) && isFallbackSsrcEndpoint(key)) {
         std::string stableKey;
         for (const auto& kv : pipelines_) {
             if (!isFallbackSsrcEndpoint(kv.first)) {
                 if (!stableKey.empty()) {
-                    return endpoint;
+                    return key;
                 }
                 stableKey = kv.first;
             }
@@ -317,8 +264,9 @@ std::string PerParticipantNdiRouter::pipelineKeyForLocked(const JitsiSourceInfo&
         }
     }
 
-    return endpoint.empty() ? "unknown" : endpoint;
+    return key.empty() ? "unknown" : key;
 }
+
 PerParticipantNdiRouter::ParticipantPipeline& PerParticipantNdiRouter::pipelineForLocked(
     const JitsiSourceInfo& source
 ) {
@@ -454,10 +402,6 @@ void PerParticipantNdiRouter::handleRtp(
             Logger::info(
                 "PerParticipantNdiRouter: video RTP endpoint=",
                 p.endpointId,
-                " source=",
-                source->sourceName,
-                " type=",
-                source->videoType,
                 " pt=",
                 static_cast<int>(rtp.payloadType),
                 " marker=",
@@ -533,4 +477,3 @@ void PerParticipantNdiRouter::handleRtp(
         return;
     }
 }
-

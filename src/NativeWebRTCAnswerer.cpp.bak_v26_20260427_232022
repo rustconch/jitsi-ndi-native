@@ -425,69 +425,36 @@ std::string jsonStringArray(const std::vector<std::string>& values) {
     return out.str();
 }
 
-std::vector<std::string> normalizeVideoSourceNamesForConstraints(const std::vector<std::string>& sourceNames) {
-    std::vector<std::string> out;
-
-    for (const auto& name : sourceNames) {
-        if (name.empty()) {
-            continue;
-        }
-
-        // Do not spend the high-quality budget on the JVB mixed placeholder.
-        // We want real per-participant camera sources like 2eba7589-v0.
-        if (name.size() >= 4 && name.compare(0, 4, "jvb-") == 0) {
-            continue;
-        }
-
-        bool alreadyPresent = false;
-        for (const auto& existing : out) {
-            if (existing == name) {
-                alreadyPresent = true;
-                break;
-            }
-        }
-
-        if (!alreadyPresent) {
-            out.push_back(name);
-        }
-    }
-
-    return out;
-}
-
 std::string makeReceiverVideoConstraintsMessage(
     const std::vector<std::string>& sourceNames,
     int maxHeight
 ) {
     /*
-        Equal speaker quality mode:
-        - Every real source is both selected and on-stage.
-        - Every real source gets the same maxHeight/maxFrameRate.
-        - lastN is the exact real source count, so the bridge forwards all known NDI speakers.
-        - defaultConstraints also stays high so newly added real sources are not immediately capped low.
+        Current Jitsi Videobridge source-name mode:
+        - selectedSources / onStageSources contain source names, for example 866501ec-v0.
+        - constraints is keyed by source name.
+        - defaultConstraints applies to sources not explicitly listed.
+        - lastN = -1 means unlimited.
     */
-    const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
-    const int lastN = realSources.empty() ? -1 : static_cast<int>(realSources.size());
-
     std::ostringstream out;
 
     out << "{";
     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
-    out << "\"lastN\":" << lastN << ",";
+    out << "\"lastN\":-1,";
     out << "\"assumedBandwidthBps\":100000000,";
-    out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
-    out << "\"onStageSources\":" << jsonStringArray(realSources) << ",";
+    out << "\"selectedSources\":" << jsonStringArray(sourceNames) << ",";
+    out << "\"onStageSources\":" << jsonStringArray(sourceNames) << ",";
     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
     out << "\"constraints\":{";
 
-    for (std::size_t i = 0; i < realSources.size(); ++i) {
+    for (std::size_t i = 0; i < sourceNames.size(); ++i) {
         if (i > 0) {
             out << ",";
         }
 
         out
             << "\""
-            << escapeJsonString(realSources[i])
+            << escapeJsonString(sourceNames[i])
             << "\":{\"maxHeight\":"
             << maxHeight
             << ",\"maxFrameRate\":30.0}";
@@ -498,34 +465,27 @@ std::string makeReceiverVideoConstraintsMessage(
 
     return out.str();
 }
+
 void sendReceiverVideoConstraints(
     const std::shared_ptr<rtc::DataChannel>& channel,
     const std::vector<std::string>& sourceNames,
     const std::string& reason
 ) {
-    const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
-
-    if (realSources.empty()) {
-        Logger::warn(
-            "NativeWebRTCAnswerer: equal 1080p constraints skipped because real video sources list is empty, reason=",
-            reason
-        );
-        return;
-    }
-
     Logger::info(
-        "NativeWebRTCAnswerer: requesting equal 1080p/30fps constraints, realSources=",
-        realSources.size(),
+        "NativeWebRTCAnswerer: requesting 1080p video constraints, sources=",
+        sourceNames.size(),
         " reason=",
         reason
     );
 
     sendBridgeMessage(
         channel,
-        makeReceiverVideoConstraintsMessage(realSources, 1080),
-        "ReceiverVideoConstraints/equal-1080p/" + reason
+        makeReceiverVideoConstraintsMessage(sourceNames, 1080),
+        "ReceiverVideoConstraints/" + reason
     );
 }
+
+
 void sendReceiverAudioSubscriptionAll(
     const std::shared_ptr<rtc::DataChannel>& channel,
     const std::string& reason
@@ -546,12 +506,15 @@ void scheduleRepeatedAudioSubscriptionRefresh(
 
     std::thread([channel]() {
         const int delaysMs[] = {
-            1000,
+            250,
+            750,
+            1500,
             3000,
-            7000,
+            6000,
+            10000,
             15000,
-            30000,
-            60000
+            20000,
+            30000
         };
 
         for (const int delayMs : delaysMs) {
@@ -1161,5 +1124,4 @@ void NativeWebRTCAnswerer::addRemoteCandidate(const LocalIceCandidate& candidate
     (void)candidate;
 #endif
 }
-
 
