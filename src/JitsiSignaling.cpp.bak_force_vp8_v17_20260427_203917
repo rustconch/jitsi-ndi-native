@@ -1,8 +1,5 @@
 #include "JitsiSignaling.h"
 
-
-#include <algorithm>
-#include <cctype>
 #include "Logger.h"
 
 #include <regex>
@@ -101,41 +98,6 @@ std::string xmlBool(bool value) {
     return value ? "true" : "false";
 }
 
-
-void forceVp8Only(JingleSession& session) {
-    for (auto& content : session.contents) {
-        const bool isVideo = (content.name == "video" || content.media == "video");
-        if (!isVideo) {
-            continue;
-        }
-
-        const std::size_t before = content.codecs.size();
-        content.codecs.erase(
-            std::remove_if(
-                content.codecs.begin(),
-                content.codecs.end(),
-                [](const JingleCodec& codec) {
-                    std::string name = codec.name;
-                    std::transform(
-                        name.begin(),
-                        name.end(),
-                        name.begin(),
-                        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); }
-                    );
-                    return name != "vp8";
-                }
-            ),
-            content.codecs.end()
-        );
-
-        if (before != content.codecs.size()) {
-            Logger::info("JitsiSignaling: forced video codec negotiation to VP8 only; codecs left=", content.codecs.size());
-        }
-        if (content.codecs.empty()) {
-            Logger::warn("JitsiSignaling: no VP8 codec remained in video content after filtering");
-        }
-    }
-}
 } // namespace
 
 JitsiSignaling::JitsiSignaling(JitsiSignalingConfig config)
@@ -390,7 +352,7 @@ void JitsiSignaling::joinMuc() {
     // JVB is an SFU and normally forwards the codec produced by the browser.
     // In current meet.jit.si rooms that is often AV1/PT=41, so advertise AV1 too.
     // Keep this XML well-formed; previous VP8-only patch left stray text after the tag.
-    xml << "<jitsi_participant_codecList>vp8,opus</jitsi_participant_codecList>";
+    xml << "<jitsi_participant_codecList>av1,vp8,opus</jitsi_participant_codecList>";
     xml << "</presence>";
     sendRaw(xml.str());
 }
@@ -506,7 +468,6 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
         Logger::warn("MEDIA EVENT: session-initiate detected but parse failed");
         return;
     }
-    forceVp8Only(session);
 
     Logger::info("MEDIA EVENT: Jingle session-initiate detected.");
     Logger::info(

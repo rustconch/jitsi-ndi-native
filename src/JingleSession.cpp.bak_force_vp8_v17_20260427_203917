@@ -294,8 +294,12 @@ bool isSupportedAudioCodec(const JingleCodec& codec) {
 }
 
 bool isSupportedVideoCodec(const JingleCodec& codec) {
-    // Force VP8. The current Windows FFmpeg build has no libdav1d and native AV1 fails.
-    return toLower(codec.name) == "vp8";
+    const std::string name = toLower(codec.name);
+
+    // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
+    // The bridge forwards the sender's encoded stream; it does not transcode AV1 to VP8 for us.
+    // Accept the two codecs we actually route/decode in this native pipeline.
+    return name == "av1" || name == "vp8";
 }
 
 bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {
