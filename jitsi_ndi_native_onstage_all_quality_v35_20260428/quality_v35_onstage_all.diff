@@ -1,0 +1,59 @@
+diff -ruN jnn_v34/src/NativeWebRTCAnswerer.cpp jnn_v35/src/NativeWebRTCAnswerer.cpp
+--- jnn_v34/src/NativeWebRTCAnswerer.cpp	2026-04-27 22:47:15.426077076 +0000
++++ jnn_v35/src/NativeWebRTCAnswerer.cpp	2026-04-27 22:47:15.456874095 +0000
+@@ -484,16 +484,15 @@
+     int maxHeight
+ ) {
+     /*
+-        Equal speaker priority mode:
++        All-on-stage quality mode:
+         - Every real source is selected, which moves all requested speakers to the top of JVB allocation.
+-        - onStageSources is intentionally empty. Jitsi Meet also uses selectedSources for multiple pinned videos,
+-          because on-stage is best for one primary tile, while selectedSources is safer for many equal-priority tiles.
++        - Every real source is also on-stage. JVB explicitly prioritizes on-stage sources up to higher resolution;
++          selectedSources alone mostly affects ordering and may still leave some cameras at a lower layer.
+         - lastN=-1 asks the bridge not to cap the number of forwarded video sources on the receiver side.
+         - defaultConstraints stays high so newly added real sources are not immediately capped low.
+     */
+     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
+     const int lastN = -1;
+-    const std::vector<std::string> emptyOnStageSources;
+ 
+     std::ostringstream out;
+ 
+@@ -502,7 +501,7 @@
+     out << "\"lastN\":" << lastN << ",";
+     out << "\"assumedBandwidthBps\":250000000,";
+     out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
+-    out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
++    out << "\"onStageSources\":" << jsonStringArray(realSources) << ",";
+     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
+     out << "\"constraints\":{";
+ 
+@@ -553,7 +552,7 @@
+     sendLastNUnlimited(channel, reason);
+ 
+     Logger::info(
+-        "NativeWebRTCAnswerer: requesting equal-priority 1080p/30fps constraints, realSources=",
++        "NativeWebRTCAnswerer: requesting all-on-stage 1080p/30fps constraints, realSources=",
+         realSources.size(),
+         " reason=",
+         reason
+@@ -562,7 +561,7 @@
+     sendBridgeMessage(
+         channel,
+         makeReceiverVideoConstraintsMessage(realSources, 1080),
+-        "ReceiverVideoConstraints/equal-priority-1080p/" + reason
++        "ReceiverVideoConstraints/all-on-stage-1080p/" + reason
+     );
+ }
+ void sendReceiverAudioSubscriptionAll(
+@@ -923,7 +922,7 @@
+                     Logger::info(
+                         "NativeWebRTCAnswerer: VideoSourcesMap parsed count=",
+                         sources.size(),
+-                        "; sending all-source equal-priority constraints"
++                        "; sending all-source all-on-stage constraints"
+                     );
+ 
+                     sendReceiverVideoConstraints(
