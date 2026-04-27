@@ -153,7 +153,7 @@ void PerParticipantNdiRouter::handleRtp(
     if (media == "video" || mid == "video") {
         ++p.videoPackets;
         // REVERT_VP8_AUDIO_V6_VIDEO_PT_LOG
-        if (p.videoPackets <= 3 || (p.videoPackets % 300) == 0) {
+        if (p.videoPackets <= 20 || (p.videoPackets % 300) == 0) {
             Logger::info(
                 "PerParticipantNdiRouter: video RTP endpoint=", p.endpointId,
                 " pt=", static_cast<int>(rtp.payloadType),
@@ -165,7 +165,7 @@ void PerParticipantNdiRouter::handleRtp(
         // This build currently has a working AV1 decode path, not a wired VP8 decode path.
         // If old VP8 forcing made the bridge send PT=100, do not feed VP8 bytes to libdav1d.
         if (rtp.payloadType == 100) {
-            if (p.videoPackets <= 3 || (p.videoPackets % 300) == 0) {
+            if (p.videoPackets <= 20 || (p.videoPackets % 300) == 0) {
                 Logger::warn("PerParticipantNdiRouter: got VP8 RTP while AV1 decoder path is active; skipping VP8 packet instead of sending it to dav1d");
             }
             return;

@@ -1,4 +1,257 @@
-#include "Av1RtpFrameAssembler.h"
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import datetime
+import re
+import shutil
+import sys
+from pathlib import Path
+
+ROOT = Path.cwd()
+SRC = ROOT / "src"
+BACKUP = ROOT / ("av1_low_overhead_v7_backup_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+
+
+def info(msg: str) -> None:
+    print(f"[AV1_LOW_OVERHEAD_V7] {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"[AV1_LOW_OVERHEAD_V7] WARN: {msg}")
+
+
+def die(msg: str) -> None:
+    print(f"[AV1_LOW_OVERHEAD_V7] ERROR: {msg}")
+    sys.exit(1)
+
+
+def read(p: Path) -> str:
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def write(p: Path, s: str) -> None:
+    p.write_text(s, encoding="utf-8", newline="")
+
+
+def backup(p: Path) -> None:
+    if not p.exists():
+        return
+    dst = BACKUP / p.relative_to(ROOT)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(p, dst)
+
+
+def find_encoded_video_frame_fields() -> tuple[str, str | None, str | None]:
+    candidates = list(SRC.rglob("*.h")) + list(SRC.rglob("*.hpp"))
+    body = None
+    source = None
+    for p in candidates:
+        t = read(p)
+        m = re.search(r"struct\s+EncodedVideoFrame\s*\{(?P<body>.*?)\};", t, re.S)
+        if m:
+            body = m.group("body")
+            source = p
+            break
+        m = re.search(r"class\s+EncodedVideoFrame\s*\{(?P<body>.*?)\};", t, re.S)
+        if m:
+            body = m.group("body")
+            source = p
+            break
+
+    if body is None:
+        warn("EncodedVideoFrame definition not found; assuming payload/timestamp/keyFrame")
+        return "payload", "timestamp", "keyFrame"
+
+    vector_fields = re.findall(
+        r"std::vector\s*<\s*(?:(?:std::)?u?int8_t|unsigned\s+char)\s*>\s+([A-Za-z_]\w*)",
+        body,
+    )
+    payload_field = None
+    for name in ["payload", "data", "bytes", "buffer", "encoded", "frame"]:
+        if name in vector_fields:
+            payload_field = name
+            break
+    if payload_field is None and vector_fields:
+        payload_field = vector_fields[0]
+    if payload_field is None:
+        warn("No std::vector<uint8_t> field found in EncodedVideoFrame; using payload")
+        payload_field = "payload"
+
+    ts_field = None
+    for name in ["timestamp", "rtpTimestamp", "timestamp90k", "pts", "pts90k"]:
+        if re.search(r"\b" + re.escape(name) + r"\b", body):
+            ts_field = name
+            break
+
+    key_field = None
+    for name in ["keyFrame", "isKeyFrame", "keyframe", "is_keyframe"]:
+        if re.search(r"\b" + re.escape(name) + r"\b", body):
+            key_field = name
+            break
+
+    rel = source.relative_to(ROOT) if source else "<unknown>"
+    info(f"Detected EncodedVideoFrame in {rel}: payload={payload_field}, timestamp={ts_field}, key={key_field}")
+    return payload_field, ts_field, key_field
+
+
+HEADER = r'''#pragma once
+// AV1_LOW_OVERHEAD_V7
+
+#include "Vp8RtpDepacketizer.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <vector>
+
+class Av1RtpFrameAssembler {
+public:
+    Av1RtpFrameAssembler() = default;
+
+    std::vector<EncodedVideoFrame> pushRtp(const std::uint8_t* data, std::size_t size);
+    std::vector<EncodedVideoFrame> pushRtp(const std::vector<std::uint8_t>& packet) {
+        return pushRtp(packet.data(), packet.size());
+    }
+
+    std::vector<EncodedVideoFrame> push(
+        const std::uint8_t* payload,
+        std::size_t payloadSize,
+        std::uint16_t sequenceNumber,
+        std::uint32_t timestamp,
+        bool marker
+    );
+
+    std::vector<EncodedVideoFrame> pushRtpPayload(
+        std::uint16_t sequenceNumber,
+        std::uint32_t timestamp,
+        bool marker,
+        const std::uint8_t* payload,
+        std::size_t payloadSize
+    ) {
+        return push(payload, payloadSize, sequenceNumber, timestamp, marker);
+    }
+
+    template <typename RtpPacketLike>
+    std::vector<EncodedVideoFrame> pushRtp(const RtpPacketLike& rtp) {
+        return push(
+            getPayload(rtp),
+            getPayloadSize(rtp),
+            static_cast<std::uint16_t>(getSequenceNumber(rtp)),
+            static_cast<std::uint32_t>(getTimestamp(rtp)),
+            static_cast<bool>(getMarker(rtp))
+        );
+    }
+
+    std::vector<EncodedVideoFrame> depacketize(const std::uint8_t* data, std::size_t size) {
+        return pushRtp(data, size);
+    }
+    std::vector<EncodedVideoFrame> depacketize(const std::vector<std::uint8_t>& packet) {
+        return pushRtp(packet);
+    }
+
+    void reset();
+
+    std::uint64_t producedFrames() const { return producedFrames_; }
+    std::uint64_t droppedUntilSequenceHeader() const { return droppedUntilSequenceHeader_; }
+    std::uint64_t sequenceGaps() const { return sequenceGaps_; }
+
+private:
+    struct RtpPacket {
+        std::uint16_t sequence = 0;
+        std::uint32_t timestamp = 0;
+        bool marker = false;
+        std::vector<std::uint8_t> payload;
+    };
+
+    std::vector<EncodedVideoFrame> drainReorderBuffer();
+    std::vector<EncodedVideoFrame> processOrderedPacket(const RtpPacket& packet);
+
+    bool parseRtp(const std::uint8_t* data, std::size_t size, RtpPacket& out);
+    bool appendAv1Payload(const std::uint8_t* data, std::size_t size, std::uint32_t timestamp, bool marker, std::vector<EncodedVideoFrame>& out);
+    bool appendObuElement(const std::uint8_t* data, std::size_t size, bool continuesPreviousObu, bool continuesInNextPacket);
+    bool appendCompletedObu(const std::uint8_t* data, std::size_t size);
+    bool emitCurrentTemporalUnit(std::uint32_t timestamp, std::vector<EncodedVideoFrame>& out);
+
+    bool readLeb128(const std::uint8_t* data, std::size_t size, std::size_t& pos, std::size_t& value) const;
+    static void writeLeb128(std::uint64_t value, std::vector<std::uint8_t>& out);
+
+    void clearCurrentUnit();
+    void markCorruptUntilMarker();
+    static std::uint16_t nextSeq(std::uint16_t v) { return static_cast<std::uint16_t>(v + 1); }
+
+private:
+    template <typename T> static auto getPayloadImpl(const T& rtp, int) -> decltype(rtp.payload) { return rtp.payload; }
+    template <typename T> static auto getPayloadImpl(const T& rtp, long) -> decltype(rtp.payloadData) { return rtp.payloadData; }
+    template <typename T> static auto getPayloadImpl(const T& rtp, char) -> decltype(rtp.payloadPtr) { return rtp.payloadPtr; }
+    template <typename T> static auto getPayloadImpl(const T& rtp, unsigned char) -> decltype(rtp.payloadStart) { return rtp.payloadStart; }
+    template <typename T> static auto getPayloadImpl(const T& rtp, short) -> decltype(rtp.payloadBytes) { return rtp.payloadBytes; }
+
+    template <typename T> static const std::uint8_t* getPayload(const T& rtp) {
+        return reinterpret_cast<const std::uint8_t*>(getPayloadImpl(rtp, 0));
+    }
+
+    template <typename T> static auto getPayloadSizeImpl(const T& rtp, int) -> decltype(rtp.payloadSize) { return rtp.payloadSize; }
+    template <typename T> static auto getPayloadSizeImpl(const T& rtp, long) -> decltype(rtp.payloadLength) { return rtp.payloadLength; }
+    template <typename T> static auto getPayloadSizeImpl(const T& rtp, char) -> decltype(rtp.payloadLen) { return rtp.payloadLen; }
+
+    template <typename T> static std::size_t getPayloadSize(const T& rtp) {
+        return static_cast<std::size_t>(getPayloadSizeImpl(rtp, 0));
+    }
+
+    template <typename T> static auto getSequenceNumberImpl(const T& rtp, int) -> decltype(rtp.sequenceNumber) { return rtp.sequenceNumber; }
+    template <typename T> static auto getSequenceNumberImpl(const T& rtp, long) -> decltype(rtp.sequence) { return rtp.sequence; }
+    template <typename T> static auto getSequenceNumberImpl(const T& rtp, char) -> decltype(rtp.seq) { return rtp.seq; }
+    template <typename T> static auto getSequenceNumberImpl(const T& rtp, unsigned char) -> decltype(rtp.seqNo) { return rtp.seqNo; }
+
+    template <typename T> static std::uint16_t getSequenceNumber(const T& rtp) {
+        return static_cast<std::uint16_t>(getSequenceNumberImpl(rtp, 0));
+    }
+
+    template <typename T> static auto getTimestampImpl(const T& rtp, int) -> decltype(rtp.timestamp) { return rtp.timestamp; }
+    template <typename T> static auto getTimestampImpl(const T& rtp, long) -> decltype(rtp.rtpTimestamp) { return rtp.rtpTimestamp; }
+    template <typename T> static auto getTimestampImpl(const T& rtp, char) -> decltype(rtp.ts) { return rtp.ts; }
+
+    template <typename T> static std::uint32_t getTimestamp(const T& rtp) {
+        return static_cast<std::uint32_t>(getTimestampImpl(rtp, 0));
+    }
+
+    template <typename T> static auto getMarkerImpl(const T& rtp, int) -> decltype(rtp.marker) { return rtp.marker; }
+    template <typename T> static auto getMarkerImpl(const T& rtp, long) -> decltype(rtp.markerBit) { return rtp.markerBit; }
+    template <typename T> static auto getMarkerImpl(const T& rtp, char) -> decltype(rtp.isMarker) { return rtp.isMarker; }
+
+    template <typename T> static bool getMarker(const T& rtp) {
+        return static_cast<bool>(getMarkerImpl(rtp, 0));
+    }
+
+private:
+    std::map<std::uint16_t, RtpPacket> reorder_;
+    bool haveExpectedSeq_ = false;
+    std::uint16_t expectedSeq_ = 0;
+
+    bool haveTimestamp_ = false;
+    std::uint32_t currentTimestamp_ = 0;
+
+    std::vector<std::uint8_t> currentUnit_;
+    std::vector<std::uint8_t> continuationObu_;
+    std::vector<std::uint8_t> cachedSequenceHeaderObu_;
+
+    bool waitingContinuation_ = false;
+    bool corruptUntilMarker_ = false;
+    bool currentUnitHasSequenceHeader_ = false;
+    bool currentUnitHasFrameData_ = false;
+    bool currentUnitKey_ = false;
+    bool decoderPrimed_ = false;
+
+    std::uint64_t producedFrames_ = 0;
+    std::uint64_t sequenceGaps_ = 0;
+    std::uint64_t droppedUntilSequenceHeader_ = 0;
+    std::uint64_t malformedPayloads_ = 0;
+};
+'''
+
+
+CPP_TEMPLATE = r'''#include "Av1RtpFrameAssembler.h"
 // AV1_LOW_OVERHEAD_V7
 
 #include "Logger.h"
@@ -363,10 +616,8 @@ bool Av1RtpFrameAssembler::emitCurrentTemporalUnit(std::uint32_t timestamp, std:
     packet.insert(packet.end(), currentUnit_.begin(), currentUnit_.end());
 
     EncodedVideoFrame frame{};
-    frame.bytes = std::move(packet);
-    frame.timestamp = timestamp;
-    frame.keyFrame = currentUnitKey_;
-    out.push_back(std::move(frame));
+    frame.__PAYLOAD_FIELD__ = std::move(packet);
+__TS_SET____KEY_SET__    out.push_back(std::move(frame));
 
     decoderPrimed_ = true;
     ++producedFrames_;
@@ -408,3 +659,53 @@ void Av1RtpFrameAssembler::writeLeb128(std::uint64_t value, std::vector<std::uin
         out.push_back(b);
     } while (value != 0);
 }
+'''
+
+
+def make_cpp(payload_field: str, ts_field: str | None, key_field: str | None) -> str:
+    ts_set = f"    frame.{ts_field} = timestamp;\n" if ts_field else ""
+    key_set = f"    frame.{key_field} = currentUnitKey_;\n" if key_field else ""
+    return (CPP_TEMPLATE
+        .replace("__PAYLOAD_FIELD__", payload_field)
+        .replace("__TS_SET__", ts_set)
+        .replace("__KEY_SET__", key_set))
+
+def patch_router_log_spam() -> None:
+    p = SRC / "PerParticipantNdiRouter.cpp"
+    if not p.exists():
+        return
+    t = read(p)
+    original = t
+    t = t.replace("p.videoPackets <= 20 || (p.videoPackets % 300) == 0", "p.videoPackets <= 3 || (p.videoPackets % 300) == 0")
+    if t != original:
+        backup(p)
+        write(p, t)
+        info("reduced video RTP payload-type log spam in PerParticipantNdiRouter.cpp")
+
+
+def main() -> None:
+    if not SRC.exists():
+        die(r"Run this from the project root, e.g. D:\MEDIA\Desktop\jitsi-ndi-native")
+
+    h = SRC / "Av1RtpFrameAssembler.h"
+    cpp = SRC / "Av1RtpFrameAssembler.cpp"
+    if not h.exists() or not cpp.exists():
+        die("src/Av1RtpFrameAssembler.h/.cpp not found. Apply the AV1 patch first, then this v7 patch.")
+
+    BACKUP.mkdir(parents=True, exist_ok=True)
+    payload_field, ts_field, key_field = find_encoded_video_frame_fields()
+
+    backup(h)
+    backup(cpp)
+    write(h, HEADER)
+    write(cpp, make_cpp(payload_field, ts_field, key_field))
+    info("replaced Av1RtpFrameAssembler with low-overhead OBU assembler + sequence-header gate")
+
+    patch_router_log_spam()
+
+    info(f"backup folder: {BACKUP}")
+    info("done. Rebuild with: cmake --build build --config Release")
+
+
+if __name__ == "__main__":
+    main()
