@@ -1,10 +1,12 @@
-﻿#include "FfmpegMediaDecoder.h"
+#include "FfmpegMediaDecoder.h"
 #include "Logger.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libavutil/avutil.h>
-#include <libavutil/error.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
+#include <libavutil/samplefmt.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
@@ -13,14 +15,9 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <limits>
-#include <memory>
 #include <stdexcept>
-#include <string>
-#include <vector>
 
 namespace {
-
 void throwIfNeg(int rc, const char* what) {
     if (rc >= 0) return;
     char err[AV_ERROR_MAX_STRING_SIZE]{};
@@ -28,168 +25,44 @@ void throwIfNeg(int rc, const char* what) {
     throw std::runtime_error(std::string(what) + ": " + err);
 }
 
-AVPixelFormat chooseSoftwarePixelFormat(AVCodecContext*, const AVPixelFormat* pixFmts) {
-    if (!pixFmts) return AV_PIX_FMT_NONE;
+AVPixelFormat jnnChooseSoftwarePixelFormat(AVCodecContext* ctx, const AVPixelFormat* pix_fmts) {
+    (void)ctx;
+    if (!pix_fmts) {
+        return AV_PIX_FMT_NONE;
+    }
 
-    for (const AVPixelFormat* p = pixFmts; *p != AV_PIX_FMT_NONE; ++p) {
+    for (const AVPixelFormat* p = pix_fmts; *p != AV_PIX_FMT_NONE; ++p) {
         const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
-        if (!desc) continue;
-        if ((desc->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0) {
-            return *p;
+        if (desc && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) {
+            continue;
         }
+        return *p;
     }
 
-    // Last resort. Returning a HW format is better than AV_PIX_FMT_NONE, but this
-    // should not happen after forcing a software decoder.
-    return pixFmts[0];
+    return pix_fmts[0];
 }
-
-const AVCodec* findDecoder(AVCodecID id) {
-    if (id == AV_CODEC_ID_AV1) {
-        // Important: avcodec_find_decoder(AV_CODEC_ID_AV1) can resolve to an AV1
-        // decoder path that tries hardware pixel formats on Windows. That produces:
-        // "Your platform doesn't support hardware accelerated AV1 decoding" and no
-        // decoded frames. Prefer libdav1d explicitly when it is available.
-        if (const AVCodec* dav1d = avcodec_find_decoder_by_name("libdav1d")) {
-            Logger::info("FfmpegMediaDecoder: using AV1 decoder libdav1d");
-            return dav1d;
-        }
-        if (const AVCodec* nativeAv1 = avcodec_find_decoder_by_name("av1")) {
-            Logger::warn("FfmpegMediaDecoder: libdav1d not found; using native software AV1 decoder");
-            return nativeAv1;
-        }
-    }
-
-    const AVCodec* codec = avcodec_find_decoder(id);
-    if (codec) {
-        Logger::info("FfmpegMediaDecoder: using decoder ", codec->name ? codec->name : "<unknown>");
-    }
-    return codec;
-}
-
 AVCodecContext* openDecoder(AVCodecID id) {
-    const AVCodec* codec = findDecoder(id);
+    const AVCodec* codec = nullptr;
+    if (id == AV_CODEC_ID_AV1) {
+        codec = avcodec_find_decoder_by_name("libdav1d");
+        if (!codec) codec = avcodec_find_decoder_by_name("dav1d");
+        if (!codec) codec = avcodec_find_decoder(id);
+    } else {
+        codec = avcodec_find_decoder(id);
+    }
     if (!codec) throw std::runtime_error("FFmpeg decoder not found");
-
     AVCodecContext* ctx = avcodec_alloc_context3(codec);
     if (!ctx) throw std::runtime_error("avcodec_alloc_context3 failed");
-
-    // Always force software pixel formats for video. This prevents FFmpeg from
-    // selecting a Windows HW pixel format that cannot actually be used on the box.
-    if (id == AV_CODEC_ID_AV1 || id == AV_CODEC_ID_VP8) {
-        ctx->get_format = chooseSoftwarePixelFormat;
-        ctx->thread_count = 0;
-        ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-    }
-
+    ctx->get_format = jnnChooseSoftwarePixelFormat;
+    ctx->thread_count = 0;
+    ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
     const int rc = avcodec_open2(ctx, codec, nullptr);
     if (rc < 0) {
         avcodec_free_context(&ctx);
         throwIfNeg(rc, "avcodec_open2");
     }
-
-    Logger::info(
-        "FfmpegMediaDecoder: decoder opened name=",
-        ctx->codec && ctx->codec->name ? ctx->codec->name : "<unknown>",
-        " codec_id=", static_cast<int>(id)
-    );
     return ctx;
 }
-
-std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
-    AVCodecContext* dec,
-    AVFrame* frame,
-    SwsContext*& sws,
-    int& swsW,
-    int& swsH,
-    AVPixelFormat& swsFmt,
-    const EncodedVideoFrame& encoded
-) {
-    std::vector<DecodedVideoFrameBGRA> out;
-
-    if (!encoded.bytes.empty()) {
-        if (encoded.bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            return out;
-        }
-
-        AVPacket* pkt = av_packet_alloc();
-        if (!pkt) return out;
-
-        const int packetSize = static_cast<int>(encoded.bytes.size());
-        if (av_new_packet(pkt, packetSize) < 0) {
-            av_packet_free(&pkt);
-            return out;
-        }
-
-        std::memcpy(pkt->data, encoded.bytes.data(), encoded.bytes.size());
-        pkt->pts = encoded.timestamp;
-        pkt->dts = encoded.timestamp;
-
-        const int sendRc = avcodec_send_packet(dec, pkt);
-        av_packet_free(&pkt);
-        if (sendRc < 0) return out;
-    }
-
-    while (true) {
-        const int rc = avcodec_receive_frame(dec, frame);
-        if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) break;
-        if (rc < 0) break;
-
-        const int w = frame->width;
-        const int h = frame->height;
-        const auto fmt = static_cast<AVPixelFormat>(frame->format);
-
-        if (w <= 0 || h <= 0 || fmt == AV_PIX_FMT_NONE) {
-            av_frame_unref(frame);
-            continue;
-        }
-
-        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
-        if (desc && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) {
-            Logger::warn(
-                "FfmpegMediaDecoder: dropped hardware pixel-format frame fmt=",
-                av_get_pix_fmt_name(fmt) ? av_get_pix_fmt_name(fmt) : "<unknown>"
-            );
-            av_frame_unref(frame);
-            continue;
-        }
-
-        if (!sws || swsW != w || swsH != h || swsFmt != fmt) {
-            if (sws) sws_freeContext(sws);
-            sws = sws_getContext(
-                w, h, fmt,
-                w, h, AV_PIX_FMT_BGRA,
-                SWS_BILINEAR,
-                nullptr, nullptr, nullptr
-            );
-            swsW = w;
-            swsH = h;
-            swsFmt = fmt;
-        }
-
-        if (!sws) {
-            av_frame_unref(frame);
-            continue;
-        }
-
-        DecodedVideoFrameBGRA f;
-        f.width = w;
-        f.height = h;
-        f.stride = w * 4;
-        f.pts90k = frame->best_effort_timestamp;
-        f.bgra.resize(static_cast<std::size_t>(f.stride) * static_cast<std::size_t>(h));
-
-        std::uint8_t* dstData[4] = { f.bgra.data(), nullptr, nullptr, nullptr };
-        int dstLinesize[4] = { f.stride, 0, 0, 0 };
-
-        sws_scale(sws, frame->data, frame->linesize, 0, h, dstData, dstLinesize);
-        out.push_back(std::move(f));
-        av_frame_unref(frame);
-    }
-
-    return out;
-}
-
 } // namespace
 
 struct FfmpegVp8Decoder::Impl {
@@ -217,7 +90,57 @@ FfmpegVp8Decoder::FfmpegVp8Decoder() : impl_(std::make_unique<Impl>()) {}
 FfmpegVp8Decoder::~FfmpegVp8Decoder() = default;
 
 std::vector<DecodedVideoFrameBGRA> FfmpegVp8Decoder::decode(const EncodedVideoFrame& encoded) {
-    return decodeVideoPacket(impl_->dec, impl_->frame, impl_->sws, impl_->swsW, impl_->swsH, impl_->swsFmt, encoded);
+    std::vector<DecodedVideoFrameBGRA> out;
+    if (!encoded.bytes.empty()) {
+        AVPacket* pkt = av_packet_alloc();
+        if (!pkt) return out;
+        av_new_packet(pkt, static_cast<int>(encoded.bytes.size()));
+        std::memcpy(pkt->data, encoded.bytes.data(), encoded.bytes.size());
+        pkt->pts = encoded.timestamp;
+        pkt->dts = encoded.timestamp;
+        const int sendRc = avcodec_send_packet(impl_->dec, pkt);
+        av_packet_free(&pkt);
+        if (sendRc < 0) return out;
+    }
+
+    while (true) {
+        const int rc = avcodec_receive_frame(impl_->dec, impl_->frame);
+        if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) break;
+        if (rc < 0) break;
+
+        const int w = impl_->frame->width;
+        const int h = impl_->frame->height;
+        if (w <= 0 || h <= 0) {
+            av_frame_unref(impl_->frame);
+            continue;
+        }
+
+        if (!impl_->sws || impl_->swsW != w || impl_->swsH != h || impl_->swsFmt != static_cast<AVPixelFormat>(impl_->frame->format)) {
+            if (impl_->sws) sws_freeContext(impl_->sws);
+            impl_->sws = sws_getContext(
+                w, h, static_cast<AVPixelFormat>(impl_->frame->format),
+                w, h, AV_PIX_FMT_BGRA,
+                SWS_BILINEAR, nullptr, nullptr, nullptr
+            );
+            impl_->swsW = w;
+            impl_->swsH = h;
+            impl_->swsFmt = static_cast<AVPixelFormat>(impl_->frame->format);
+        }
+
+        DecodedVideoFrameBGRA f;
+        f.width = w;
+        f.height = h;
+        f.stride = w * 4;
+        f.pts90k = impl_->frame->best_effort_timestamp;
+        f.bgra.resize(static_cast<std::size_t>(f.stride) * h);
+        std::uint8_t* dstData[4] = { f.bgra.data(), nullptr, nullptr, nullptr };
+        int dstLinesize[4] = { f.stride, 0, 0, 0 };
+        sws_scale(impl_->sws, impl_->frame->data, impl_->frame->linesize, 0, h, dstData, dstLinesize);
+        out.push_back(std::move(f));
+        av_frame_unref(impl_->frame);
+    }
+
+    return out;
 }
 
 struct FfmpegAv1Decoder::Impl {
@@ -245,7 +168,57 @@ FfmpegAv1Decoder::FfmpegAv1Decoder() : impl_(std::make_unique<Impl>()) {}
 FfmpegAv1Decoder::~FfmpegAv1Decoder() = default;
 
 std::vector<DecodedVideoFrameBGRA> FfmpegAv1Decoder::decode(const EncodedVideoFrame& encoded) {
-    return decodeVideoPacket(impl_->dec, impl_->frame, impl_->sws, impl_->swsW, impl_->swsH, impl_->swsFmt, encoded);
+    std::vector<DecodedVideoFrameBGRA> out;
+    if (!encoded.bytes.empty()) {
+        AVPacket* pkt = av_packet_alloc();
+        if (!pkt) return out;
+        av_new_packet(pkt, static_cast<int>(encoded.bytes.size()));
+        std::memcpy(pkt->data, encoded.bytes.data(), encoded.bytes.size());
+        pkt->pts = encoded.timestamp;
+        pkt->dts = encoded.timestamp;
+        const int sendRc = avcodec_send_packet(impl_->dec, pkt);
+        av_packet_free(&pkt);
+        if (sendRc < 0) return out;
+    }
+
+    while (true) {
+        const int rc = avcodec_receive_frame(impl_->dec, impl_->frame);
+        if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) break;
+        if (rc < 0) break;
+
+        const int w = impl_->frame->width;
+        const int h = impl_->frame->height;
+        if (w <= 0 || h <= 0) {
+            av_frame_unref(impl_->frame);
+            continue;
+        }
+
+        if (!impl_->sws || impl_->swsW != w || impl_->swsH != h || impl_->swsFmt != static_cast<AVPixelFormat>(impl_->frame->format)) {
+            if (impl_->sws) sws_freeContext(impl_->sws);
+            impl_->sws = sws_getContext(
+                w, h, static_cast<AVPixelFormat>(impl_->frame->format),
+                w, h, AV_PIX_FMT_BGRA,
+                SWS_BILINEAR, nullptr, nullptr, nullptr
+            );
+            impl_->swsW = w;
+            impl_->swsH = h;
+            impl_->swsFmt = static_cast<AVPixelFormat>(impl_->frame->format);
+        }
+
+        DecodedVideoFrameBGRA f;
+        f.width = w;
+        f.height = h;
+        f.stride = w * 4;
+        f.pts90k = impl_->frame->best_effort_timestamp;
+        f.bgra.resize(static_cast<std::size_t>(f.stride) * h);
+        std::uint8_t* dstData[4] = { f.bgra.data(), nullptr, nullptr, nullptr };
+        int dstLinesize[4] = { f.stride, 0, 0, 0 };
+        sws_scale(impl_->sws, impl_->frame->data, impl_->frame->linesize, 0, h, dstData, dstLinesize);
+        out.push_back(std::move(f));
+        av_frame_unref(impl_->frame);
+    }
+
+    return out;
 }
 
 struct FfmpegOpusDecoder::Impl {
@@ -264,7 +237,7 @@ struct FfmpegOpusDecoder::Impl {
         dec = avcodec_alloc_context3(codec);
         if (!dec) throw std::runtime_error("avcodec_alloc_context3 failed");
 
-        // Raw RTP Opus has no container to provide this metadata.
+        // Raw RTP Opus has no container to provide this metadata. Set it before opening.
         dec->sample_rate = 48000;
         av_channel_layout_default(&dec->ch_layout, 2);
 
@@ -310,7 +283,7 @@ struct FfmpegOpusDecoder::Impl {
         int rc = swr_alloc_set_opts2(
             &swr,
             &outLayout,
-            AV_SAMPLE_FMT_FLTP, // NDI audio v2 expects float32 planar: L block, then R block.
+            AV_SAMPLE_FMT_FLTP,   // NDI audio v2 expects float32 planar: L block, then R block.
             48000,
             &inLayout,
             inFormat,
@@ -338,20 +311,13 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 ) {
     std::vector<DecodedAudioFrameFloat32Planar> out;
     if (!payload || payloadSize == 0) return out;
-    if (payloadSize > static_cast<std::size_t>(std::numeric_limits<int>::max())) return out;
 
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return out;
-
-    if (av_new_packet(pkt, static_cast<int>(payloadSize)) < 0) {
-        av_packet_free(&pkt);
-        return out;
-    }
-
+    av_new_packet(pkt, static_cast<int>(payloadSize));
     std::memcpy(pkt->data, payload, payloadSize);
     pkt->pts = rtpTimestamp;
     pkt->dts = rtpTimestamp;
-
     const int sendRc = avcodec_send_packet(impl_->dec, pkt);
     av_packet_free(&pkt);
     if (sendRc < 0) return out;
@@ -385,13 +351,12 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
         f.channels = 2;
         f.samples = outCapacity;
         f.pts48k = impl_->frame->best_effort_timestamp >= 0 ? impl_->frame->best_effort_timestamp : rtpTimestamp;
-        f.planar.resize(static_cast<std::size_t>(f.channels) * static_cast<std::size_t>(outCapacity));
+        f.planar.resize(static_cast<std::size_t>(f.channels) * outCapacity);
 
         std::uint8_t* outPlanes[2] = {
             reinterpret_cast<std::uint8_t*>(f.planar.data()),
             reinterpret_cast<std::uint8_t*>(f.planar.data() + outCapacity)
         };
-
         const int converted = swr_convert(
             impl_->swr,
             outPlanes,
@@ -399,10 +364,9 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
             const_cast<const std::uint8_t**>(impl_->frame->extended_data),
             inSamples
         );
-
         if (converted > 0) {
             f.samples = converted;
-            f.planar.resize(static_cast<std::size_t>(f.channels) * static_cast<std::size_t>(converted));
+            f.planar.resize(static_cast<std::size_t>(f.channels) * converted);
 
             for (auto& sample : f.planar) {
                 if (!std::isfinite(sample)) {
@@ -425,12 +389,11 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
                     " format=fltp"
                 );
             }
-
             out.push_back(std::move(f));
         }
-
         av_frame_unref(impl_->frame);
     }
 
     return out;
 }
+

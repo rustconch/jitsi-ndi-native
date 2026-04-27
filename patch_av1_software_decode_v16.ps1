@@ -1,4 +1,17 @@
-﻿#include "FfmpegMediaDecoder.h"
+$ErrorActionPreference = 'Stop'
+
+$root = Get-Location
+$file = Join-Path $root 'src\FfmpegMediaDecoder.cpp'
+if (-not (Test-Path $file)) {
+  throw "File not found: $file. Run this script from the jitsi-ndi-native repository root."
+}
+
+$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+$backup = "$file.bak_av1_software_decode_v16_$stamp"
+Copy-Item $file $backup -Force
+
+$content = @'
+#include "FfmpegMediaDecoder.h"
 #include "Logger.h"
 
 extern "C" {
@@ -434,3 +447,11 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 
     return out;
 }
+'@
+
+# Write UTF-8 source without Russian text. Windows PowerShell 5 uses UTF-8 with BOM here;
+# MSVC compiles it normally.
+Set-Content -Path $file -Value $content -Encoding UTF8
+Write-Host "Patched src\FfmpegMediaDecoder.cpp"
+Write-Host "Backup: $backup"
+Write-Host "Now run: cmake --build build --config Release"

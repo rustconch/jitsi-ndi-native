@@ -1,51 +1,36 @@
-Что исправляет этот патч
-=======================
+Что чинит патч
+================
 
-По логу видно, что программа всё ещё запускает старый status-pattern mode:
-  Running Jitsi XMPP bootstrap + NDI status-pattern mode
+Лог показывает, что RTP и AV1-сборщик уже работают:
+  Av1RtpFrameAssembler: produced AV1 temporal units=1 sequenceHeaderCached=1 key=1
 
-Это означает, что один глобальный NDISender + TestPattern всё ещё активны в main.cpp.
-Пока так, NDI будет показывать заглушку, а per-speaker pipeline не получит пакеты.
+Но FFmpeg дальше падает на выборе аппаратного AV1:
+  Your platform doesn't support hardware accelerated AV1 decoding.
+  Failed to get pixel format.
 
-Патч делает три вещи:
-1) Заменяет src/main.cpp: убирает TestPattern и один общий NDI sender.
-2) Добавляет ndiBaseName и PerParticipantNdiRouter в JitsiSignaling.
-3) Пробрасывает RTP из NativeWebRTCAnswerer в PerParticipantNdiRouter.
+Патч заставляет FFmpeg выбирать software pixel format и, если доступен, предпочитать libdav1d для AV1.
 
 Как применить
 =============
 
-PowerShell:
+1. Распакуй архив в корень проекта:
+   D:\MEDIA\Desktop\jitsi-ndi-native
 
-cd $env:USERPROFILE\Downloads\jitsi-ndi-native-runtime-wiring-patch
-.\apply_runtime_wiring_patch.ps1 -ProjectRoot "D:\MEDIA\Desktop\jitsi-ndi-native"
+2. В PowerShell:
+   cd D:\MEDIA\Desktop\jitsi-ndi-native
+   powershell -ExecutionPolicy Bypass -File .\patch_av1_software_decode.ps1
 
-Потом пересобрать:
+3. Пересобери:
+   cmake --build build --config Release
 
-cd D:\MEDIA\Desktop\jitsi-ndi-native
-cmake --build build --config Release
+4. Запусти:
+   .\build\Release\jitsi-ndi-native.exe --room 6767676766767penxyi
 
-DLL снова рядом с exe, если нужно:
+Ожидаемый результат
+===================
 
-Copy-Item ".\build\_deps\libdatachannel-build\Release\datachannel.dll" ".\build\Release\" -Force
+В логе должны исчезнуть строки:
+  Your platform doesn't support hardware accelerated AV1 decoding
+  Failed to get pixel format
 
-Запуск с логом:
-
-New-Item -ItemType Directory -Force .\logs | Out-Null
-$env:PATH = "D:\vcpkg\installed\x64-windows\bin;C:\Program Files\NDI\NDI 6 SDK\Bin\x64;D:\MEDIA\Desktop\jitsi-ndi-native\build\Release;$env:PATH"
-$log = ".\logs\run_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
-.\build\Release\jitsi-ndi-native.exe --room 6767676766767penxyi --ndi-name JitsiNativeNDI 2>&1 | Tee-Object -FilePath $log
-
-Ожидаемый лог после исправления
-===============================
-
-Не должно быть строки:
-  Running Jitsi XMPP bootstrap + NDI status-pattern mode
-
-Должна быть строка:
-  Running Jitsi XMPP bootstrap + per-participant NDI media router
-
-Когда реально пойдут RTP-пакеты, появятся строки вида:
-  PerParticipantNdiRouter: created NDI participant source: JitsiNativeNDI - ...
-  NativeWebRTCAnswerer: RTP audio packets=...
-  NativeWebRTCAnswerer: RTP video packets=...
+И должны появиться/остаться строки AV1 temporal units + NDI video frames.
