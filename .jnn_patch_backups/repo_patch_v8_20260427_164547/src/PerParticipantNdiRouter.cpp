@@ -162,18 +162,46 @@ void PerParticipantNdiRouter::handleRtp(
                 " ssrc=", rtp.ssrc
             );
         }
-        // VP8-stable path: route VP8 into the VP8 depacketizer/decoder.
+        // This build currently has a working AV1 decode path, not a wired VP8 decode path.
+        // If old VP8 forcing made the bridge send PT=100, do not feed VP8 bytes to libdav1d.
+        if (rtp.payloadType == 100) {
+            if (p.videoPackets <= 3 || (p.videoPackets % 300) == 0) {
+                Logger::warn("PerParticipantNdiRouter: got VP8 RTP while AV1 decoder path is active; skipping VP8 packet instead of sending it to dav1d");
+            }
+            return;
+        }
+
         ++routedVideoPackets_;
 
-    // AV1 dav1d branch disabled by repo-patch-v8 VP8-stable mode; non-VP8 video is dropped below.
-        
+    if (rtp.payloadType == 41) {
+        const auto frames = p.av1.pushRtp(rtp);
+
+        for (const auto& encoded : frames) {
+            for (const auto& decoded : p.av1Decoder.decode(encoded)) {
+                p.ndi->sendVideoFrame(decoded, 30, 1);
+            }
+        }
+
+        if ((p.videoPackets % 300) == 0) {
+            Logger::info(
+                "PerParticipantNdiRouter: AV1 video packets endpoint=",
+                p.endpointId,
+                " count=",
+                p.videoPackets,
+                " producedFrames=",
+                frames.size()
+            );
+        }
+
+        return;
+    }
 
 
         /*
             Jitsi offer may contain AV1/VP8/H264/VP9 at the same time.
-            The active decoder path is VP8-only.
+            Our current decoder path is VP8-only.
 
-            If AV1/VP9/H264 RTP packets are received despite VP8-only negotiation,
+            If AV1/VP9/H264 RTP packets are accidentally passed into the VP8 decoder,
             FFmpeg prints errors like:
                 [vp8] Unknown profile
                 [vp8] Header size larger than data provided

@@ -349,7 +349,7 @@ void JitsiSignaling::joinMuc() {
         << " node='https://github.com/jitsi-ndi-native'"
         << " ver='native'/>";
 
-    xml << "<jitsi_participant_codecList>vp8,opus</jitsi_participant_codecList>vp8,opus";
+    xml << "<jitsi_participant_codecList>av1,vp8,opus</jitsi_participant_codecList>";
 
     xml << "</presence>";
 

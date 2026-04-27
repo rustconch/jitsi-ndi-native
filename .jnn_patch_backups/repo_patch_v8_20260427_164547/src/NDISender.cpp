@@ -26,7 +26,7 @@ bool NDISender::start() {
     NDIlib_send_create_t createDesc{};
     createDesc.p_ndi_name = sourceName_.c_str();
     createDesc.clock_video = false;
-    createDesc.clock_audio = false; // repo-patch-v8: RTP arrival already clocks audio; do not block the RTP callback thread
+    createDesc.clock_audio = true; // REVERT_VP8_AUDIO_V6: let NDI clock audio
 
     ndiSend_ = NDIlib_send_create(&createDesc);
     if (!ndiSend_) {

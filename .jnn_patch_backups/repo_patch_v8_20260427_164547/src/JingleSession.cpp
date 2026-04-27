@@ -1,4 +1,4 @@
-#include "JingleSession.h"
+﻿#include "JingleSession.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -295,8 +295,12 @@ bool isSupportedAudioCodec(const JingleCodec& codec) {
 
 bool isSupportedVideoCodec(const JingleCodec& codec) {
     const std::string name = toLower(codec.name);
-    // Stable path: advertise/accept only VP8 because the wired decoder path is VP8.
-    return name == "vp8";
+
+    // JVB usually forwards the sender's actual codec; it does not transcode to VP8 for us.
+    return name == "vp8"
+        || name == "vp9"
+        || name == "h264"
+        || name == "av1";
 }
 
 bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {
