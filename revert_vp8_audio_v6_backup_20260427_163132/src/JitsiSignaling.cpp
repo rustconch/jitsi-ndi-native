@@ -16,6 +16,54 @@
 
 
 
+// JNN_FORCE_JINGLE_VP8_COMPILE_V5_BEGIN
+static std::string jnnEraseXmlElementAroundVp8V5(std::string xml, size_t pos, const std::string& elementName) {
+    const std::string open = "<" + elementName;
+    const size_t start = xml.rfind(open, pos);
+    if (start == std::string::npos) return xml;
+
+    const std::string close = "</" + elementName + ">";
+    size_t end = xml.find(close, pos);
+    if (end != std::string::npos) {
+        end += close.size();
+    } else {
+        end = xml.find("/>", pos);
+        if (end == std::string::npos) return xml;
+        end += 2;
+    }
+    xml.erase(start, end - start);
+    return xml;
+}
+
+static std::string jnnErasePayloadTypeByCodecNameVp8V5(std::string xml, const std::string& codecName) {
+    for (;;) {
+        size_t pos = xml.find("name='" + codecName + "'");
+        if (pos == std::string::npos) pos = xml.find("name=\"" + codecName + "\"");
+        if (pos == std::string::npos) break;
+        xml = jnnEraseXmlElementAroundVp8V5(std::move(xml), pos, "payload-type");
+    }
+    return xml;
+}
+
+static std::string jnnEraseRtpHeaderExtensionByTextVp8V5(std::string xml, const std::string& needle) {
+    for (;;) {
+        size_t pos = xml.find(needle);
+        if (pos == std::string::npos) break;
+        xml = jnnEraseXmlElementAroundVp8V5(std::move(xml), pos, "rtp-hdrext");
+    }
+    return xml;
+}
+
+static std::string jnnForceJingleSessionAcceptVp8OnlyV5(std::string xml) {
+    if (xml.find("session-accept") == std::string::npos) return xml;
+    xml = jnnErasePayloadTypeByCodecNameVp8V5(std::move(xml), "AV1");
+    xml = jnnErasePayloadTypeByCodecNameVp8V5(std::move(xml), "H264");
+    xml = jnnErasePayloadTypeByCodecNameVp8V5(std::move(xml), "VP9");
+    xml = jnnEraseRtpHeaderExtensionByTextVp8V5(std::move(xml), "dependency-descriptor");
+    xml = jnnEraseRtpHeaderExtensionByTextVp8V5(std::move(xml), "video-layers-allocation");
+    return xml;
+}
+// JNN_FORCE_JINGLE_VP8_COMPILE_V5_END
 
 namespace {
 
@@ -349,7 +397,7 @@ void JitsiSignaling::joinMuc() {
         << " node='https://github.com/jitsi-ndi-native'"
         << " ver='native'/>";
 
-    xml << "<jitsi_participant_codecList>av1,vp8,opus</jitsi_participant_codecList>";
+    xml << "<jitsi_participant_codecList>vp8,opus</jitsi_participant_codecList>";
 
     xml << "</presence>";
 
@@ -579,6 +627,7 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
         answer.fingerprint
     );
 
+    acceptXml = jnnForceJingleSessionAcceptVp8OnlyV5(std::move(acceptXml)); // JNN_FORCE_JINGLE_VP8_COMPILE_V5_APPLIED
     Logger::info("JingleSession: session-accept XML:\n", acceptXml);
 
     sendRaw(acceptXml);
