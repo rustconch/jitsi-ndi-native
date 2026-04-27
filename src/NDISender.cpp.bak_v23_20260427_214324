@@ -1,4 +1,4 @@
-﻿#include "NDISender.h"
+#include "NDISender.h"
 
 #include "Logger.h"
 
@@ -86,9 +86,6 @@ bool NDISender::sendFrame(const VideoFrameBGRA& frame, int fpsNum, int fpsDen) {
     video.p_data = const_cast<std::uint8_t*>(frame.pixels.data());
     video.line_stride_in_bytes = frame.stride;
     NDIlib_send_send_video_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &video);
-    if ((sentFrames_ % 300) == 0) {
-        Logger::info("NDI video frame sent: ", sourceName_, " ", frame.width, "x", frame.height);
-    }
 #else
     if ((sentFrames_ % 300) == 0) {
         Logger::info("Mock NDI video frame ", sentFrames_, " ", sourceName_, " ", frame.width, "x", frame.height);
@@ -115,9 +112,6 @@ bool NDISender::sendVideoFrame(const DecodedVideoFrameBGRA& frame, int fpsNum, i
     video.p_data = const_cast<std::uint8_t*>(frame.bgra.data());
     video.line_stride_in_bytes = frame.stride;
     NDIlib_send_send_video_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &video);
-    if ((sentFrames_ % 300) == 0) {
-        Logger::info("NDI video frame sent: ", sourceName_, " ", frame.width, "x", frame.height);
-    }
 #else
     if ((sentFrames_ % 300) == 0) {
         Logger::info("Mock NDI decoded video ", sentFrames_, " ", sourceName_, " ", frame.width, "x", frame.height);
@@ -223,4 +217,3 @@ void NDISender::sendAudioFrameImmediate(const DecodedAudioFrameFloat32Planar& fr
     NDIlib_send_send_audio_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &audio);
 }
 #endif
-

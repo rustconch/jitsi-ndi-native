@@ -182,6 +182,10 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
 
     return out;
 }
+
+constexpr int kJnnNdiOutWidth = 1920;
+constexpr int kJnnNdiOutHeight = 1080;
+
 } // namespace
 
 struct FfmpegVp8Decoder::Impl {
@@ -410,4 +414,3 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 
     return out;
 }
-

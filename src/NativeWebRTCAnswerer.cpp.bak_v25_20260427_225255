@@ -472,7 +472,7 @@ void sendReceiverVideoConstraints(
     const std::string& reason
 ) {
     Logger::info(
-        "NativeWebRTCAnswerer: requesting 1080p video constraints, sources=",
+        "NativeWebRTCAnswerer: requesting real-source 1080p video constraints, sources=",
         sourceNames.size(),
         " reason=",
         reason
@@ -535,12 +535,7 @@ void scheduleRepeatedVideoConstraintRefresh(
     }
 
     std::thread([channel, sourcesMutex, latestSources, fallbackSources]() {
-        const int delaysMs[] = {
-            3000,
-            10000,
-            30000,
-            60000
-        };
+        const int delaysMs[] = { 1000, 3000, 6000, 10000, 20000, 45000, 60000 };
 
         for (const int delayMs : delaysMs) {
             std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
@@ -1124,4 +1119,5 @@ void NativeWebRTCAnswerer::addRemoteCandidate(const LocalIceCandidate& candidate
     (void)candidate;
 #endif
 }
+
 

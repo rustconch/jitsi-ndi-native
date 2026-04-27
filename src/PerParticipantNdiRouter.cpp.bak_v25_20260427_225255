@@ -1,0 +1,496 @@
+﻿#include "PerParticipantNdiRouter.h"
+
+#include "Logger.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <regex>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+#include "RtpSourceRegistry.h"
+
+namespace {
+
+std::uint8_t readRtpPayloadType(const std::uint8_t* data, std::size_t size) {
+    if (!data || size < 2) {
+        return 0;
+    }
+
+    return static_cast<std::uint8_t>(data[1] & 0x7F);
+}
+
+std::string xmlUnescape(std::string s) {
+    auto repl = [&](const std::string& a, const std::string& b) {
+        std::size_t pos = 0;
+        while ((pos = s.find(a, pos)) != std::string::npos) {
+            s.replace(pos, a.size(), b);
+            pos += b.size();
+        }
+    };
+    repl("&quot;", "\"");
+    repl("&apos;", "'");
+    repl("&lt;", "<");
+    repl("&gt;", ">");
+    repl("&amp;", "&");
+    return s;
+}
+
+std::string attr(const std::string& tag, const std::string& name) {
+    const std::regex re(name + R"(\s*=\s*(['"])(.*?)\1)", std::regex::icase);
+    std::smatch m;
+    if (std::regex_search(tag, m, re) && m.size() > 2) {
+        return xmlUnescape(m[2].str());
+    }
+    return {};
+}
+
+std::string firstTag(const std::string& xml, const std::string& name) {
+    const std::regex re("<" + name + R"((?:\s|>|/)[\s\S]*?>)", std::regex::icase);
+    std::smatch m;
+    if (std::regex_search(xml, m, re)) {
+        return m[0].str();
+    }
+    return {};
+}
+
+std::vector<std::string> contentBlocks(const std::string& xml) {
+    std::vector<std::string> out;
+    const std::regex re(R"(<content(?:\s|>)[\s\S]*?</content>)", std::regex::icase);
+    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), re); it != std::sregex_iterator(); ++it) {
+        out.push_back((*it)[0].str());
+    }
+    return out;
+}
+
+std::vector<std::string> payloadTags(const std::string& xml) {
+    std::vector<std::string> out;
+    const std::regex re(R"(<payload-type(?:\s|>)[\s\S]*?(?:/>|</payload-type>))", std::regex::icase);
+    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), re); it != std::sregex_iterator(); ++it) {
+        out.push_back((*it)[0].str());
+    }
+    return out;
+}
+
+std::string toLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s;
+}
+
+bool parsePayloadTypeId(const std::string& id, std::uint8_t& out) {
+    try {
+        const int value = std::stoi(id);
+        if (value < 0 || value > 127) {
+            return false;
+        }
+        out = static_cast<std::uint8_t>(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool startsWith(const std::string& s, const std::string& prefix) {
+    return s.rfind(prefix, 0) == 0;
+}
+
+bool isFallbackSsrcEndpoint(const std::string& endpointId) {
+    return startsWith(endpointId, "ssrc-");
+}
+
+struct ParsedPayloadTypes {
+    std::set<std::uint8_t> opus;
+    std::set<std::uint8_t> av1;
+    std::set<std::uint8_t> vp8;
+};
+
+ParsedPayloadTypes parsePayloadTypesFromXml(const std::string& xml) {
+    ParsedPayloadTypes parsed;
+
+    for (const auto& content : contentBlocks(xml)) {
+        const std::string contentTag = firstTag(content, "content");
+        const std::string descriptionTag = firstTag(content, "description");
+        std::string media = toLower(attr(descriptionTag, "media"));
+        if (media.empty()) {
+            media = toLower(attr(contentTag, "name"));
+        }
+
+        for (const auto& ptTag : payloadTags(content)) {
+            std::uint8_t pt = 0;
+            if (!parsePayloadTypeId(attr(ptTag, "id"), pt)) {
+                continue;
+            }
+
+            const std::string codec = toLower(attr(ptTag, "name"));
+            if ((media == "audio" || media.empty()) && codec == "opus") {
+                parsed.opus.insert(pt);
+            } else if ((media == "video" || media.empty()) && codec == "av1") {
+                parsed.av1.insert(pt);
+            } else if ((media == "video" || media.empty()) && codec == "vp8") {
+                parsed.vp8.insert(pt);
+            }
+        }
+    }
+
+    return parsed;
+}
+
+std::string payloadSetToString(const std::set<std::uint8_t>& values) {
+    std::string out;
+    for (const auto value : values) {
+        if (!out.empty()) {
+            out += ",";
+        }
+        out += std::to_string(static_cast<int>(value));
+    }
+    return out.empty() ? "<none>" : out;
+}
+
+std::unordered_map<std::string, std::uint64_t> g_droppedUnsupportedVideoPackets;
+
+} // namespace
+
+PerParticipantNdiRouter::PerParticipantNdiRouter(std::string ndiBaseName)
+    : ndiBaseName_(std::move(ndiBaseName)) {
+    if (ndiBaseName_.empty()) {
+        ndiBaseName_ = "JitsiNDI";
+    }
+}
+
+PerParticipantNdiRouter::~PerParticipantNdiRouter() = default;
+
+void PerParticipantNdiRouter::updateSourcesFromJingleXml(const std::string& xml) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        updatePayloadTypesFromJingleXmlLocked(xml);
+    }
+
+    if (xml.find("<source") == std::string::npos) {
+        return;
+    }
+
+    sourceMap_.updateFromJingleXml(xml);
+}
+
+void PerParticipantNdiRouter::removeSourcesFromJingleXml(const std::string& xml) {
+    if (xml.find("<source") == std::string::npos) {
+        return;
+    }
+
+    sourceMap_.removeFromJingleXml(xml);
+}
+
+void PerParticipantNdiRouter::updatePayloadTypesFromJingleXmlLocked(const std::string& xml) {
+    const auto parsed = parsePayloadTypesFromXml(xml);
+    bool changed = false;
+
+    if (!parsed.opus.empty() && parsed.opus != opusPayloadTypes_) {
+        opusPayloadTypes_ = parsed.opus;
+        changed = true;
+    }
+
+    if (!parsed.av1.empty() && parsed.av1 != av1PayloadTypes_) {
+        av1PayloadTypes_ = parsed.av1;
+        changed = true;
+    }
+
+    if (!parsed.vp8.empty() && parsed.vp8 != vp8PayloadTypes_) {
+        vp8PayloadTypes_ = parsed.vp8;
+        changed = true;
+    }
+
+    if (changed) {
+        Logger::info(
+            "PerParticipantNdiRouter: payload types opus=",
+            payloadSetToString(opusPayloadTypes_),
+            " av1=",
+            payloadSetToString(av1PayloadTypes_),
+            " vp8=",
+            payloadSetToString(vp8PayloadTypes_)
+        );
+    }
+}
+
+bool PerParticipantNdiRouter::isAcceptedOpusPayloadTypeLocked(std::uint8_t payloadType) const {
+    return opusPayloadTypes_.empty() || opusPayloadTypes_.find(payloadType) != opusPayloadTypes_.end();
+}
+
+bool PerParticipantNdiRouter::isAcceptedAv1PayloadTypeLocked(std::uint8_t payloadType) const {
+    return av1PayloadTypes_.find(payloadType) != av1PayloadTypes_.end();
+}
+
+bool PerParticipantNdiRouter::isAcceptedVp8PayloadTypeLocked(std::uint8_t payloadType) const {
+    return vp8PayloadTypes_.find(payloadType) != vp8PayloadTypes_.end();
+}
+
+std::string PerParticipantNdiRouter::sourceNameFor(const JitsiSourceInfo& source) const {
+    const std::string safe = JitsiSourceMap::sanitizeForNdiName(
+        source.displayName.empty()
+            ? (source.endpointId.empty() ? source.sourceName : source.endpointId)
+            : source.displayName
+    );
+
+    return ndiBaseName_ + " - " + safe;
+}
+
+std::string PerParticipantNdiRouter::pipelineKeyForLocked(const JitsiSourceInfo& source) const {
+    std::string key = source.endpointId.empty()
+        ? (source.displayName.empty() ? source.sourceName : source.displayName)
+        : source.endpointId;
+
+    if (key.empty()) {
+        key = source.displayName;
+    }
+
+    // If audio has only an orphan SSRC key, attach it to the one already-created
+    // participant sender instead of making "JitsiNDI - ssrc-..." audio-only sources.
+    if ((source.media == "audio" || key.empty() || isFallbackSsrcEndpoint(key)) && isFallbackSsrcEndpoint(key)) {
+        std::string stableKey;
+        for (const auto& kv : pipelines_) {
+            if (!isFallbackSsrcEndpoint(kv.first)) {
+                if (!stableKey.empty()) {
+                    return key;
+                }
+                stableKey = kv.first;
+            }
+        }
+        if (!stableKey.empty()) {
+            return stableKey;
+        }
+    }
+
+    return key.empty() ? "unknown" : key;
+}
+
+PerParticipantNdiRouter::ParticipantPipeline& PerParticipantNdiRouter::pipelineForLocked(
+    const JitsiSourceInfo& source
+) {
+    const std::string key = pipelineKeyForLocked(source);
+
+    auto it = pipelines_.find(key);
+
+    if (it != pipelines_.end()) {
+        return *it->second;
+    }
+
+    auto pipeline = std::make_unique<ParticipantPipeline>();
+
+    pipeline->endpointId = key;
+    pipeline->displayName = source.displayName;
+    pipeline->ndi = std::make_unique<NDISender>(sourceNameFor(source));
+
+    pipeline->ndi->start();
+
+    Logger::info(
+        "PerParticipantNdiRouter: created NDI participant source: ",
+        pipeline->ndi->sourceName(),
+        " endpoint=",
+        key
+    );
+
+    auto* ptr = pipeline.get();
+    pipelines_[key] = std::move(pipeline);
+
+    return *ptr;
+}
+
+void PerParticipantNdiRouter::handleRtp(
+    const std::string& mid,
+    const std::uint8_t* data,
+    std::size_t size
+) {
+    const auto rtp = RtpPacket::parse(data, size);
+
+    if (!rtp.valid || rtp.payloadSize == 0) {
+        return;
+    }
+
+    const std::uint8_t payloadType = readRtpPayloadType(data, size);
+
+    auto source = sourceMap_.lookup(rtp.ssrc);
+
+    if (!source) {
+        ++unknownSsrcPackets_;
+
+        if ((unknownSsrcPackets_ % 500) == 0) {
+            Logger::warn(
+                "PerParticipantNdiRouter: unknown SSRC ",
+                RtpPacket::ssrcHex(rtp.ssrc),
+                " mid=",
+                mid,
+                " pt=",
+                static_cast<int>(payloadType)
+            );
+        }
+
+        return;
+    }
+
+    const std::string media = !source->media.empty() ? source->media : mid;
+
+    ParticipantPipeline* pipeline = nullptr;
+    std::string endpointId;
+    std::uint64_t packetCount = 0;
+    bool acceptedOpus = false;
+    bool acceptedAv1 = false;
+    bool acceptedVp8 = false;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& p = pipelineForLocked(*source);
+        pipeline = &p;
+        endpointId = p.endpointId;
+
+        if (media == "audio" || mid == "audio") {
+            ++p.audioPackets;
+            packetCount = p.audioPackets;
+            acceptedOpus = isAcceptedOpusPayloadTypeLocked(rtp.payloadType);
+
+            if (!acceptedOpus) {
+                const auto dropped = ++droppedNonOpusAudioPackets_;
+                if (dropped == 1 || (dropped % 200) == 0) {
+                    Logger::warn(
+                        "PerParticipantNdiRouter: dropping non-Opus audio RTP endpoint=",
+                        endpointId,
+                        " ssrc=",
+                        RtpPacket::ssrcHex(rtp.ssrc),
+                        " pt=",
+                        static_cast<int>(rtp.payloadType),
+                        " opusPts=",
+                        payloadSetToString(opusPayloadTypes_),
+                        " dropped=",
+                        dropped
+                    );
+                }
+                return;
+            }
+
+            ++routedAudioPackets_;
+        } else if (media == "video" || mid == "video") {
+            ++p.videoPackets;
+            packetCount = p.videoPackets;
+            acceptedAv1 = isAcceptedAv1PayloadTypeLocked(rtp.payloadType);
+            acceptedVp8 = isAcceptedVp8PayloadTypeLocked(rtp.payloadType);
+
+            if (!acceptedAv1 && !acceptedVp8) {
+                const std::string dropKey =
+                    endpointId + ":ssrc-" + RtpPacket::ssrcHex(rtp.ssrc) + ":pt-" + std::to_string(payloadType);
+                const auto dropped = ++g_droppedUnsupportedVideoPackets[dropKey];
+                if (dropped == 1 || (dropped % 300) == 0) {
+                    Logger::warn(
+                        "PerParticipantNdiRouter: dropping unsupported non-AV1/non-VP8 video RTP endpoint=",
+                        endpointId,
+                        " ssrc=",
+                        RtpPacket::ssrcHex(rtp.ssrc),
+                        " pt=",
+                        static_cast<int>(payloadType),
+                        " av1Pts=",
+                        payloadSetToString(av1PayloadTypes_),
+                        " vp8Pts=",
+                        payloadSetToString(vp8PayloadTypes_),
+                        " dropped=",
+                        dropped
+                    );
+                }
+                return;
+            }
+
+            ++routedVideoPackets_;
+        } else {
+            return;
+        }
+    }
+
+    if (!pipeline || !pipeline->ndi) {
+        return;
+    }
+
+    if (media == "audio" || mid == "audio") {
+        std::lock_guard<std::mutex> mediaLock(pipeline->mediaMutex);
+
+        for (const auto& decoded : pipeline->audioDecoder.decodeRtpPayload(
+                 rtp.payload,
+                 rtp.payloadSize,
+                 rtp.timestamp
+             )) {
+            pipeline->ndi->sendAudioFrame(decoded);
+        }
+
+        if ((packetCount % 500) == 0) {
+            Logger::info(
+                "PerParticipantNdiRouter: audio packets endpoint=",
+                endpointId,
+                " count=",
+                packetCount,
+                " pt=",
+                static_cast<int>(rtp.payloadType)
+            );
+        }
+
+        return;
+    }
+
+    if (media == "video" || mid == "video") {
+        if (packetCount <= 3 || (packetCount % 300) == 0) {
+            Logger::info(
+                "PerParticipantNdiRouter: video RTP endpoint=",
+                endpointId,
+                " pt=",
+                static_cast<int>(rtp.payloadType),
+                " marker=",
+                static_cast<int>(rtp.marker),
+                " payloadBytes=",
+                rtp.payloadSize,
+                " ssrc=",
+                rtp.ssrc
+            );
+        }
+
+        std::lock_guard<std::mutex> mediaLock(pipeline->mediaMutex);
+
+        if (acceptedAv1) {
+            const auto frames = pipeline->av1.pushRtp(rtp);
+            for (const auto& encoded : frames) {
+                for (const auto& decoded : pipeline->av1Decoder.decode(encoded)) {
+                    pipeline->ndi->sendVideoFrame(decoded, 30, 1);
+                }
+            }
+            if ((packetCount % 300) == 0 || !frames.empty()) {
+                Logger::info(
+                    "PerParticipantNdiRouter: AV1 video packets endpoint=",
+                    endpointId,
+                    " count=",
+                    packetCount,
+                    " producedFrames=",
+                    frames.size()
+                );
+            }
+            return;
+        }
+
+        if (acceptedVp8) {
+            auto encoded = pipeline->vp8.push(rtp);
+            if (encoded) {
+                for (const auto& decoded : pipeline->videoDecoder.decode(*encoded)) {
+                    pipeline->ndi->sendVideoFrame(decoded, 30, 1);
+                }
+            }
+            if ((packetCount % 300) == 0) {
+                Logger::info(
+                    "PerParticipantNdiRouter: VP8 video packets endpoint=",
+                    endpointId,
+                    " count=",
+                    packetCount,
+                    " pt=",
+                    static_cast<int>(payloadType)
+                );
+            }
+            return;
+        }
+    }
+}

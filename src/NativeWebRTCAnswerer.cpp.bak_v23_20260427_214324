@@ -441,10 +441,10 @@ std::string makeReceiverVideoConstraintsMessage(
     out << "{";
     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
     out << "\"lastN\":-1,";
-    out << "\"assumedBandwidthBps\":100000000,";
+    out << "\"assumedBandwidthBps\":60000000,";
     out << "\"selectedSources\":" << jsonStringArray(sourceNames) << ",";
     out << "\"onStageSources\":" << jsonStringArray(sourceNames) << ",";
-    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
+    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << "},";
     out << "\"constraints\":{";
 
     for (std::size_t i = 0; i < sourceNames.size(); ++i) {
@@ -457,7 +457,7 @@ std::string makeReceiverVideoConstraintsMessage(
             << escapeJsonString(sourceNames[i])
             << "\":{\"maxHeight\":"
             << maxHeight
-            << ",\"maxFrameRate\":30.0}";
+            << "}";
     }
 
     out << "}";
@@ -536,9 +536,16 @@ void scheduleRepeatedVideoConstraintRefresh(
 
     std::thread([channel, sourcesMutex, latestSources, fallbackSources]() {
         const int delaysMs[] = {
+            250,
+            750,
+            1500,
             3000,
+            6000,
             10000,
+            15000,
+            20000,
             30000,
+            45000,
             60000
         };
 
@@ -1124,4 +1131,3 @@ void NativeWebRTCAnswerer::addRemoteCandidate(const LocalIceCandidate& candidate
     (void)candidate;
 #endif
 }
-

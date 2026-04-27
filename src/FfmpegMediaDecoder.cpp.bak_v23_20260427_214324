@@ -1,4 +1,4 @@
-﻿#include "FfmpegMediaDecoder.h"
+#include "FfmpegMediaDecoder.h"
 #include "Logger.h"
 
 extern "C" {
@@ -182,6 +182,7 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
 
     return out;
 }
+
 } // namespace
 
 struct FfmpegVp8Decoder::Impl {
@@ -410,4 +411,3 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 
     return out;
 }
-

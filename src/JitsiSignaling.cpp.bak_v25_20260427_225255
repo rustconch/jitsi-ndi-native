@@ -1,4 +1,4 @@
-﻿#include "JitsiSignaling.h"
+#include "JitsiSignaling.h"
 
 
 #include <algorithm>
@@ -603,44 +603,6 @@ void JitsiSignaling::handleJingleTransportInfo(const std::string& xml) {
     const std::string from = xmlUnescape(attrValue(iqTag, "from"));
     const std::string id = attrValue(iqTag, "id");
 
-    const std::string jingleTag = findFirstTag(xml, "jingle");
-    const std::string sid = xmlUnescape(attrValue(jingleTag, "sid"));
-
-    std::string activeFocusJid;
-    std::string activeSid;
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        activeFocusJid = currentFocusJid_;
-        activeSid = currentSid_;
-    }
-
-    if (!activeFocusJid.empty() && from != activeFocusJid) {
-        Logger::warn(
-            "MEDIA EVENT: ignoring non-focus/P2P transport-info from=",
-            from,
-            " sid=",
-            sid.empty() ? "?" : sid,
-            " activeFocus=",
-            activeFocusJid
-        );
-        sendIqResult(from, id);
-        return;
-    }
-
-    if (!activeSid.empty() && !sid.empty() && sid != activeSid) {
-        Logger::warn(
-            "MEDIA EVENT: ignoring transport-info for stale sid=",
-            sid,
-            " activeSid=",
-            activeSid,
-            " from=",
-            from
-        );
-        sendIqResult(from, id);
-        return;
-    }
-
     LocalIceCandidate candidate;
 
     if (parseTransportInfoCandidate(xml, candidate)) {
@@ -651,6 +613,7 @@ void JitsiSignaling::handleJingleTransportInfo(const std::string& xml) {
 
     sendIqResult(from, id);
 }
+
 void JitsiSignaling::handleJingleTerminate(const std::string& xml) {
     const std::string iqTag = findFirstTag(xml, "iq");
     const std::string from = xmlUnescape(attrValue(iqTag, "from"));
@@ -817,45 +780,6 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
         return;
     }
 
-    if (
-        contains(xml, "urn:xmpp:jingle:1")
-        && (
-            containsAnyQuoteAttr(xml, "action", "source-add")
-            || contains(xml, "source-add")
-        )
-    ) {
-        const std::string to = extractIqAttr(xml, "from");
-        const std::string id = extractIqAttr(xml, "id");
-
-        Logger::info("MEDIA EVENT: Jingle source-add detected; updating source map and ACKing.");
-
-        if (ndiRouter_) {
-            ndiRouter_->updateSourcesFromJingleXml(xml);
-        }
-
-        sendIqResult(to, id);
-        return;
-    }
-
-    if (
-        contains(xml, "urn:xmpp:jingle:1")
-        && (
-            containsAnyQuoteAttr(xml, "action", "source-remove")
-            || contains(xml, "source-remove")
-        )
-    ) {
-        const std::string to = extractIqAttr(xml, "from");
-        const std::string id = extractIqAttr(xml, "id");
-
-        Logger::info("MEDIA EVENT: Jingle source-remove detected; updating source map and ACKing.");
-
-        if (ndiRouter_) {
-            ndiRouter_->removeSourcesFromJingleXml(xml);
-        }
-
-        sendIqResult(to, id);
-        return;
-    }
     if (
         contains(xml, "urn:xmpp:jingle:1")
         && (
