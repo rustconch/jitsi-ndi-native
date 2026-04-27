@@ -1,4 +1,4 @@
-﻿﻿# Jitsi NDI Native - simple Windows GUI launcher
+﻿# Jitsi NDI Native - simple Windows GUI launcher
 # Place this file in D:\MEDIA\Desktop\jitsi-ndi-native and run:
 # powershell -ExecutionPolicy Bypass -File .\JitsiNdiGui.ps1
 
@@ -18,6 +18,146 @@ $script:isStopping = $false
 $script:selectedExePath = $null
 $script:logDir = Join-Path $script:repoRoot "logs"
 $script:currentLogFile = $null
+$script:settingsFile = Join-Path $script:repoRoot "JitsiNdiGui.settings.json"
+$script:sourceNameToKey = @{}
+$script:lastCommandLine = ""
+$script:lastParsedRoom = ""
+$script:lastStartNick = ""
+
+function Get-ControlTextSafe {
+    param([object]$Control, [string]$Fallback = "")
+    try {
+        if ($Control -and -not $Control.IsDisposed) { return [string]$Control.Text }
+    } catch {}
+    return $Fallback
+}
+
+function Update-ParsedRoomPreview {
+    try {
+        if (-not $txtRoom -or $txtRoom.IsDisposed -or -not $lblParsedRoom -or $lblParsedRoom.IsDisposed) { return }
+        $room = Convert-JitsiInputToRoom $txtRoom.Text
+        if ([string]::IsNullOrWhiteSpace($room)) {
+            $lblParsedRoom.Text = "Room: —"
+        } else {
+            $lblParsedRoom.Text = "Room: " + $room
+        }
+    } catch {}
+}
+
+function Update-Summary {
+    if (-not $grid -or $grid.IsDisposed) { return }
+
+    if ($grid.InvokeRequired) {
+        try { [void]$grid.BeginInvoke([System.Action]{ Update-Summary }) } catch {}
+        return
+    }
+
+    $total = 0
+    $cameras = 0
+    $screens = 0
+    $r1080 = 0
+    $r720 = 0
+    $r540 = 0
+
+    foreach ($row in $grid.Rows) {
+        if ($row.IsNewRow) { continue }
+        $total++
+        $kind = [string]$row.Cells["Kind"].Value
+        if ($kind -eq "camera") { $cameras++ }
+        elseif ($kind -eq "screen") { $screens++ }
+
+        $res = [string]$row.Cells["Resolution"].Value
+        if ($res -match "^(\d+)x(\d+)$") {
+            $h = [int]$Matches[2]
+            if ($h -ge 1080) { $r1080++ }
+            elseif ($h -ge 720) { $r720++ }
+            elseif ($h -gt 0 -and $h -le 540) { $r540++ }
+        }
+    }
+
+    try {
+        if ($lblSources -and -not $lblSources.IsDisposed) {
+            $lblSources.Text = "Источники: $total  камеры: $cameras  экраны: $screens"
+        }
+        if ($lblQualitySummary -and -not $lblQualitySummary.IsDisposed) {
+            $lblQualitySummary.Text = "Разрешение: 1080p=$r1080  720p=$r720  <=540p=$r540"
+        }
+    } catch {}
+}
+
+function Save-GuiSettings {
+    try {
+        if (-not $txtRoom -or -not $txtNick) { return }
+        $obj = [ordered]@{
+            roomInput = [string]$txtRoom.Text
+            nick = [string]$txtNick.Text
+            passNickOnStart = [bool]$chkNickOnStart.Checked
+            exePath = [string]$script:selectedExePath
+            qualityPreset = if ($cmbQuality) { [string]$cmbQuality.Text } else { "" }
+            savedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        }
+        ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $script:settingsFile -Encoding UTF8
+    } catch {
+        # Settings persistence must never affect the receiver.
+    }
+}
+
+function Load-GuiSettings {
+    try {
+        if (-not (Test-Path $script:settingsFile)) { return }
+        $cfg = Get-Content -LiteralPath $script:settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($cfg.roomInput -and $txtRoom) { $txtRoom.Text = [string]$cfg.roomInput }
+        if ($cfg.nick -and $txtNick) { $txtNick.Text = [string]$cfg.nick }
+        if ($null -ne $cfg.passNickOnStart -and $chkNickOnStart) { $chkNickOnStart.Checked = [bool]$cfg.passNickOnStart }
+        if ($cfg.exePath -and (Test-Path ([string]$cfg.exePath))) { Set-ExePath ([string]$cfg.exePath) }
+        if ($cfg.qualityPreset -and $cmbQuality) {
+            $idx = $cmbQuality.Items.IndexOf([string]$cfg.qualityPreset)
+            if ($idx -ge 0) { $cmbQuality.SelectedIndex = $idx }
+        }
+        Update-ParsedRoomPreview
+    } catch {
+        # Ignore malformed/old settings files.
+    }
+}
+
+function Copy-CurrentCommand {
+    try {
+        $exePath = $script:selectedExePath
+        if ([string]::IsNullOrWhiteSpace($exePath)) { $exePath = Find-NativeExe }
+        $room = Convert-JitsiInputToRoom $txtRoom.Text
+        if ([string]::IsNullOrWhiteSpace($room)) { return }
+
+        $args = New-Object System.Collections.Generic.List[string]
+        $args.Add("--room")
+        $args.Add($room)
+        if ($chkNickOnStart.Checked) {
+            $nick = Sanitize-Name $txtNick.Text
+            if (-not [string]::IsNullOrWhiteSpace($nick)) {
+                $args.Add("--nick")
+                $args.Add($nick)
+            }
+        }
+        $cmd = (Quote-CliArg $exePath) + " " + (Join-CliArgs $args)
+        [System.Windows.Forms.Clipboard]::SetText($cmd)
+        Append-Log "[GUI] Command copied to clipboard."
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Не удалось скопировать команду.`n" + $_.Exception.Message, "Jitsi NDI GUI") | Out-Null
+    }
+}
+
+function Copy-SelectedGridValue {
+    param([string]$ColumnName)
+    try {
+        if (-not $grid -or $grid.SelectedRows.Count -lt 1) { return }
+        $row = $grid.SelectedRows[0]
+        $value = [string]$row.Cells[$ColumnName].Value
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            [System.Windows.Forms.Clipboard]::SetText($value)
+            Append-Log ("[GUI] Copied " + $ColumnName + ": " + $value)
+        }
+    } catch {}
+}
+
 
 function Convert-JitsiInputToRoom {
     param([string]$InputText)
@@ -147,6 +287,7 @@ function Ensure-Row {
     if ($kind) { $row.Cells["Kind"].Value = $kind }
     $row.Cells["Updated"].Value = (Get-Date).ToString("HH:mm:ss")
 
+    Update-Summary
     return $row
 }
 
@@ -201,6 +342,8 @@ function Update-EndpointRows {
         if ($stats.connectionQuality) { $row.Cells["Quality"].Value = ("{0:N0}%" -f [double]$stats.connectionQuality) }
         if ($stats.jvbRTT) { $row.Cells["RTT"].Value = "$($stats.jvbRTT) ms" }
     }
+
+    Update-Summary
 }
 
 function Parse-Line {
@@ -215,11 +358,14 @@ function Parse-Line {
         $displayName = $sourceName -replace "^JitsiNativeNDI\s*-\s*", ""
         $displayName = $displayName.Trim()
         $kind = Get-SourceKind -sourceKey $endpoint -sourceName $sourceName
+        $script:sourceNameToKey[$sourceName] = $endpoint
         Ensure-Row -key $endpoint -endpoint $endpoint -displayName $displayName -kind $kind | Out-Null
+        Update-Summary
         return
     }
 
-    # NDI frame sent: source name + resolution
+    # NDI frame sent: source name + resolution.
+    # Prefer the exact sourceName->endpoint mapping from the creation log to avoid duplicate rows.
     if ($line -match "NDI video frame sent:\s*(.+?)\s+(\d+)x(\d+)") {
         $sourceName = $Matches[1].Trim()
         $w = $Matches[2]
@@ -227,12 +373,21 @@ function Parse-Line {
         $displayName = $sourceName -replace "^JitsiNativeNDI\s*-\s*", ""
         $displayName = $displayName.Trim()
 
-        $key = $displayName
-        if ($displayName -match "([A-Za-z0-9]{6,})(?:-|$)") { $key = $Matches[1] }
+        $key = $null
+        if ($script:sourceNameToKey.ContainsKey($sourceName)) {
+            $key = [string]$script:sourceNameToKey[$sourceName]
+        } else {
+            $key = $displayName
+            if ($displayName -match "([A-Za-z0-9]{6,})(?:-|$)") { $key = $Matches[1] }
+        }
 
         $kind = Get-SourceKind -sourceKey $key -sourceName $sourceName
         $row = Ensure-Row -key $key -endpoint $key -displayName $displayName -kind $kind
-        if ($row) { $row.Cells["Resolution"].Value = "${w}x${h}" }
+        if ($row) {
+            $row.Cells["Resolution"].Value = "${w}x${h}"
+            $row.Cells["Updated"].Value = (Get-Date).ToString("HH:mm:ss")
+        }
+        Update-Summary
         return
     }
 
@@ -240,6 +395,7 @@ function Parse-Line {
     if ($line -match "video RTP endpoint=([A-Za-z0-9_-]+).*ssrc=(\d+)") {
         $endpoint = $Matches[1]
         Ensure-Row -key $endpoint -endpoint $endpoint -displayName "" -kind (Get-SourceKind -sourceKey $endpoint -sourceName "") | Out-Null
+        Update-Summary
         return
     }
 
@@ -255,6 +411,7 @@ function Parse-Line {
                     $kind = Get-SourceKind -sourceKey $src -sourceName ""
                     Ensure-Row -key $src -endpoint $endpoint -displayName "" -kind $kind | Out-Null
                 }
+                Update-Summary
             } elseif ($json.colibriClass -eq "DominantSpeakerEndpointChangeEvent") {
                 $script:dominantEndpoint = [string]$json.dominantSpeakerEndpoint
                 if (-not [string]::IsNullOrWhiteSpace($script:dominantEndpoint)) {
@@ -492,8 +649,15 @@ function Start-Receiver {
     # ProcessStartInfo.ArgumentList may be unavailable or NULL, so use Arguments.
     $psi.Arguments = Join-CliArgs $args
 
+    Save-GuiSettings
+    $script:lastParsedRoom = $room
+    $script:lastStartNick = if ($chkNickOnStart.Checked) { (Sanitize-Name $txtNick.Text) } else { "" }
+    $script:lastCommandLine = (Quote-CliArg $psi.FileName) + " " + $psi.Arguments
+
     $script:rowsByKey.Clear()
+    $script:sourceNameToKey.Clear()
     $grid.Rows.Clear()
+    Update-Summary
     $txtLog.Clear()
     Start-SessionLog
     Append-Log ("[GUI] Starting: " + $psi.FileName + " " + $psi.Arguments)
@@ -592,7 +756,7 @@ function Stop-Receiver {
 # ---------------- UI ----------------
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Jitsi NDI Native GUI"
+$form.Text = "Jitsi NDI Native GUI v36"
 $form.Size = New-Object System.Drawing.Size(1180, 760)
 $form.StartPosition = "CenterScreen"
 $form.MinimumSize = New-Object System.Drawing.Size(980, 640)
@@ -602,9 +766,9 @@ $form.Font = $font
 
 $top = New-Object System.Windows.Forms.TableLayoutPanel
 $top.Dock = "Top"
-$top.Height = 150
+$top.Height = 190
 $top.ColumnCount = 6
-$top.RowCount = 4
+$top.RowCount = 5
 $top.Padding = New-Object System.Windows.Forms.Padding(10)
 [void]$top.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
 [void]$top.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
@@ -674,8 +838,8 @@ Add-Label "Качество:" 2 2 | Out-Null
 $cmbQuality = New-Object System.Windows.Forms.ComboBox
 $cmbQuality.Dock = "Fill"
 $cmbQuality.DropDownStyle = "DropDownList"
-[void]$cmbQuality.Items.Add("только мониторинг")
-[void]$cmbQuality.Items.Add("управление качеством пока не поддерживается native")
+[void]$cmbQuality.Items.Add("native: все источники в приоритете / мониторинг")
+[void]$cmbQuality.Items.Add("safe: GUI не передаёт флаги качества")
 $cmbQuality.SelectedIndex = 0
 $cmbQuality.Enabled = $false
 $top.Controls.Add($cmbQuality, 3, 2)
@@ -687,36 +851,57 @@ $chkNickOnStart.Checked = $true
 $top.Controls.Add($chkNickOnStart, 4, 2)
 $top.SetColumnSpan($chkNickOnStart, 2)
 
+$lblParsedRoom = New-Object System.Windows.Forms.Label
+$lblParsedRoom.Text = "Room: —"
+$lblParsedRoom.Dock = "Fill"
+$lblParsedRoom.TextAlign = "MiddleLeft"
+$top.Controls.Add($lblParsedRoom, 0, 3)
+$top.SetColumnSpan($lblParsedRoom, 2)
+
+$lblSources = New-Object System.Windows.Forms.Label
+$lblSources.Text = "Источники: —"
+$lblSources.Dock = "Fill"
+$lblSources.TextAlign = "MiddleLeft"
+$top.Controls.Add($lblSources, 2, 3)
+$top.SetColumnSpan($lblSources, 2)
+
+$lblQualitySummary = New-Object System.Windows.Forms.Label
+$lblQualitySummary.Text = "Разрешение: —"
+$lblQualitySummary.Dock = "Fill"
+$lblQualitySummary.TextAlign = "MiddleLeft"
+$top.Controls.Add($lblQualitySummary, 4, 3)
+$top.SetColumnSpan($lblQualitySummary, 2)
+
 $btnStart = New-Object System.Windows.Forms.Button
 $btnStart.Text = "Старт"
 $btnStart.Dock = "Fill"
 $btnStart.Add_Click({ Start-Receiver })
-$top.Controls.Add($btnStart, 0, 3)
+$top.Controls.Add($btnStart, 0, 4)
 
 $btnStop = New-Object System.Windows.Forms.Button
 $btnStop.Text = "Стоп"
 $btnStop.Dock = "Fill"
 $btnStop.Enabled = $false
 $btnStop.Add_Click({ Stop-Receiver })
-$top.Controls.Add($btnStop, 1, 3)
+$top.Controls.Add($btnStop, 1, 4)
 
 $lblState = New-Object System.Windows.Forms.Label
 $lblState.Text = "Остановлен"
 $lblState.Dock = "Fill"
 $lblState.TextAlign = "MiddleLeft"
-$top.Controls.Add($lblState, 2, 3)
+$top.Controls.Add($lblState, 2, 4)
 
 $lblDominant = New-Object System.Windows.Forms.Label
 $lblDominant.Text = "Активный спикер: —"
 $lblDominant.Dock = "Fill"
 $lblDominant.TextAlign = "MiddleLeft"
-$top.Controls.Add($lblDominant, 3, 3)
+$top.Controls.Add($lblDominant, 3, 4)
 
 $lblBandwidth = New-Object System.Windows.Forms.Label
 $lblBandwidth.Text = "Downlink estimate: —"
 $lblBandwidth.Dock = "Fill"
 $lblBandwidth.TextAlign = "MiddleLeft"
-$top.Controls.Add($lblBandwidth, 4, 3)
+$top.Controls.Add($lblBandwidth, 4, 4)
 $top.SetColumnSpan($lblBandwidth, 2)
 
 $split = New-Object System.Windows.Forms.SplitContainer
@@ -758,7 +943,52 @@ foreach ($c in $columns) {
     [void]$grid.Columns.Add($col)
 }
 
+$gridMenu = New-Object System.Windows.Forms.ContextMenuStrip
+[void]$gridMenu.Items.Add("Копировать NDI имя", $null, { Copy-SelectedGridValue "Name" })
+[void]$gridMenu.Items.Add("Копировать endpoint", $null, { Copy-SelectedGridValue "Endpoint" })
+[void]$gridMenu.Items.Add("Копировать разрешение", $null, { Copy-SelectedGridValue "Resolution" })
+$grid.ContextMenuStrip = $gridMenu
+$grid.Add_CellDoubleClick({ Copy-SelectedGridValue "Name" })
+
 $split.Panel1.Controls.Add($grid)
+
+$logPanel = New-Object System.Windows.Forms.Panel
+$logPanel.Dock = "Fill"
+$split.Panel2.Controls.Add($logPanel)
+
+$logButtons = New-Object System.Windows.Forms.FlowLayoutPanel
+$logButtons.Dock = "Top"
+$logButtons.Height = 34
+$logButtons.FlowDirection = "LeftToRight"
+$logButtons.Padding = New-Object System.Windows.Forms.Padding(4, 4, 4, 0)
+$logPanel.Controls.Add($logButtons)
+
+$btnCopyCmd = New-Object System.Windows.Forms.Button
+$btnCopyCmd.Text = "Копировать команду запуска"
+$btnCopyCmd.Width = 190
+$btnCopyCmd.Height = 26
+$btnCopyCmd.Add_Click({ Copy-CurrentCommand })
+[void]$logButtons.Controls.Add($btnCopyCmd)
+
+$btnClearLog = New-Object System.Windows.Forms.Button
+$btnClearLog.Text = "Очистить лог"
+$btnClearLog.Width = 110
+$btnClearLog.Height = 26
+$btnClearLog.Add_Click({ $txtLog.Clear(); $script:logLines.Clear() })
+[void]$logButtons.Controls.Add($btnClearLog)
+
+$btnOpenLogFile = New-Object System.Windows.Forms.Button
+$btnOpenLogFile.Text = "Открыть текущий лог"
+$btnOpenLogFile.Width = 150
+$btnOpenLogFile.Height = 26
+$btnOpenLogFile.Add_Click({
+    if ($script:currentLogFile -and (Test-Path $script:currentLogFile)) {
+        Start-Process notepad.exe $script:currentLogFile
+    } else {
+        Open-LogFolder
+    }
+})
+[void]$logButtons.Controls.Add($btnOpenLogFile)
 
 $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Dock = "Fill"
@@ -767,14 +997,26 @@ $txtLog.ScrollBars = "Both"
 $txtLog.ReadOnly = $true
 $txtLog.WordWrap = $false
 $txtLog.Font = New-Object System.Drawing.Font("Consolas", 9)
-$split.Panel2.Controls.Add($txtLog)
+$logPanel.Controls.Add($txtLog)
+$txtLog.BringToFront()
 
 $form.Add_FormClosing({
+    Save-GuiSettings
     Stop-Receiver
 })
 
-Append-Log "[GUI v33-interface-only] Готово. Вставь ссылку Jitsi и нажми Старт."
-Append-Log "[GUI] Основа запуска сохранена: GUI не передаёт --quality и не меняет WebRTC/NDI-часть."
-Append-Log "[GUI] Ник применяется только при новом входе в комнату: измени ник, затем Стоп -> Старт."
+$txtRoom.Add_TextChanged({ Update-ParsedRoomPreview })
+$txtRoom.Add_Leave({ Save-GuiSettings })
+$txtNick.Add_Leave({ Save-GuiSettings })
+$chkNickOnStart.Add_CheckedChanged({ Save-GuiSettings })
+$cmbQuality.Add_SelectedIndexChanged({ Save-GuiSettings })
+
+Load-GuiSettings
+Update-ParsedRoomPreview
+Update-Summary
+
+Append-Log "[GUI v36-interface-safe] Готово. Вставь ссылку Jitsi и нажми Старт."
+Append-Log "[GUI] Основа запуска сохранена: GUI передаёт только --room и опционально --nick."
+Append-Log "[GUI] Настройки сохраняются в JitsiNdiGui.settings.json; изменения применяются при следующем старте."
 
 [void][System.Windows.Forms.Application]::Run($form)

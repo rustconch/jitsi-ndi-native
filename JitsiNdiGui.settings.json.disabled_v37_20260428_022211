@@ -1,0 +1,8 @@
+﻿{
+    "roomInput":  "https://meet.jit.si/6767676766767penxyi",
+    "nick":  "vmix",
+    "passNickOnStart":  true,
+    "exePath":  "D:\\MEDIA\\Desktop\\jitsi-ndi-native\\build-ndi\\Release\\jitsi-ndi-native.exe",
+    "qualityPreset":  "native: все источники в приоритете / мониторинг",
+    "savedAt":  "2026-04-28 02:17:23"
+}

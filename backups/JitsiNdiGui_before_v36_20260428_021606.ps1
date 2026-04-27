@@ -1,4 +1,4 @@
-﻿﻿# Jitsi NDI Native - simple Windows GUI launcher
+﻿# Jitsi NDI Native - simple Windows GUI launcher
 # Place this file in D:\MEDIA\Desktop\jitsi-ndi-native and run:
 # powershell -ExecutionPolicy Bypass -File .\JitsiNdiGui.ps1
 

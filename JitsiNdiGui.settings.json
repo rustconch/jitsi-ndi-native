@@ -1,8 +1,0 @@
-﻿{
-    "room":  "https://meet.jit.si/6767676766767penxyi",
-    "nick":  "Jitsi NDI",
-    "ndiName":  "JitsiNativeNDI",
-    "participantFilter":  "",
-    "quality":  "1080p",
-    "exePath":  "D:\\MEDIA\\Desktop\\jitsi-ndi-native\\build-ndi\\Release\\jitsi-ndi-native.exe"
-}
