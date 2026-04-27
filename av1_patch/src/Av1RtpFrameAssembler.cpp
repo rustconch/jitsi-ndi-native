@@ -125,7 +125,7 @@ std::vector<EncodedVideoFrame> Av1RtpFrameAssembler::flushCurrentFrame() {
 
         If your local struct uses another field name, change only the next line.
     */
-    frame.bytes = std::move(currentFrame_);
+    frame.data = std::move(currentFrame_);
     frame.timestamp = currentTimestamp_;
 
     out.push_back(std::move(frame));

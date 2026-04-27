@@ -34,7 +34,6 @@ private:
         std::string displayName;
         std::unique_ptr<NDISender> ndi;
         Vp8RtpDepacketizer vp8;
-        Av1RtpFrameAssembler av1;
         FfmpegVp8Decoder videoDecoder;
 
         FfmpegAv1Decoder av1Decoder;

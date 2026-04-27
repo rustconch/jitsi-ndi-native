@@ -743,6 +743,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     const std::string offerSdp = forceVp8OnlyVideoSdp(rawOfferSdp);
 
     if (offerSdp != rawOfferSdp) {
+        Logger::warn("NativeWebRTCAnswerer: VP8-only SDP filter applied to remote offer");
     }
 
     const std::vector<std::string> initialVideoSources = extractVideoSourceNamesFromSdp(rawOfferSdp);
@@ -1092,7 +1093,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
     });
 
-    Logger::info("NativeWebRTCAnswerer: setting remote Jitsi SDP-like offer");
+    Logger::info("NativeWebRTCAnswerer: setting remote Jitsi SDP-like VP8-only offer");
 
     try {
         pc->setRemoteDescription(rtc::Description(offerSdp, "offer"));
@@ -1117,6 +1118,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     outAnswer.sdp = forceVp8OnlyVideoSdp(impl_->localSdp);
 
     if (outAnswer.sdp != impl_->localSdp) {
+        Logger::warn("NativeWebRTCAnswerer: VP8-only SDP filter applied to local answer");
     }
 
     outAnswer.iceUfrag = extractSdpAttribute(outAnswer.sdp, "ice-ufrag");

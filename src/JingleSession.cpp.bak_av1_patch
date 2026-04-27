@@ -295,11 +295,17 @@ bool isSupportedAudioCodec(const JingleCodec& codec) {
 bool isSupportedVideoCodec(const JingleCodec& codec) {
     const std::string name = toLower(codec.name);
 
-    // JVB usually forwards the sender's actual codec; it does not transcode to VP8 for us.
-    return name == "vp8"
-        || name == "vp9"
-        || name == "h264"
-        || name == "av1";
+    /*
+        Important fix.
+
+        Our current media path decodes only VP8. If session-accept advertises
+        AV1/H264/VP9, JVB may legally send AV1 pt=41, H264 or VP9, and then
+        PerParticipantNdiRouter drops the packets as non-VP8.
+
+        Therefore both synthetic SDP and Jingle session-accept must expose
+        only VP8 for video.
+    */
+    return name == "vp8";
 }
 
 bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {

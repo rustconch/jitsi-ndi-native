@@ -1,0 +1,83 @@
+diff --git a/src/PerParticipantNdiRouter.h b/src/PerParticipantNdiRouter.h
+index 0000000..0000000 100644
+--- a/src/PerParticipantNdiRouter.h
++++ b/src/PerParticipantNdiRouter.h
+@@
++#include "Av1RtpFrameAssembler.h"
+@@
+     Vp8FrameAssembler vp8;
++    Av1RtpFrameAssembler av1;
+     FfmpegVp8Decoder videoDecoder;
++    FfmpegAv1Decoder av1Decoder;
+
+diff --git a/src/PerParticipantNdiRouter.cpp b/src/PerParticipantNdiRouter.cpp
+index 0000000..0000000 100644
+--- a/src/PerParticipantNdiRouter.cpp
++++ b/src/PerParticipantNdiRouter.cpp
+@@
+     if (media == "video" || mid == "video") {
+         ++p.videoPackets;
+         ++routedVideoPackets_;
++
++        if (rtp.payloadType == 41) {
++            const auto frames = p.av1.pushRtp(rtp);
++
++            for (const auto& encoded : frames) {
++                for (const auto& decoded : p.av1Decoder.decode(encoded)) {
++                    p.ndi->sendVideoFrame(decoded, 30, 1);
++                }
++            }
++
++            if ((p.videoPackets % 300) == 0) {
++                Logger::info(
++                    "PerParticipantNdiRouter: AV1 video packets endpoint=",
++                    p.endpointId,
++                    " count=",
++                    p.videoPackets,
++                    " producedFrames=",
++                    frames.size()
++                );
++            }
++
++            return;
++        }
+ 
+         if (rtp.payloadType != 100) {
+             Logger::warn("PerParticipantNdiRouter: dropping non-VP8 video RTP ...");
+             return;
+         }
+
+diff --git a/src/FfmpegMediaDecoder.h b/src/FfmpegMediaDecoder.h
+index 0000000..0000000 100644
+--- a/src/FfmpegMediaDecoder.h
++++ b/src/FfmpegMediaDecoder.h
+@@
+ class FfmpegVp8Decoder { ... };
++
++class FfmpegAv1Decoder {
++public:
++    FfmpegAv1Decoder();
++    ~FfmpegAv1Decoder();
++    FfmpegAv1Decoder(const FfmpegAv1Decoder&) = delete;
++    FfmpegAv1Decoder& operator=(const FfmpegAv1Decoder&) = delete;
++    std::vector<DecodedVideoFrameBGRA> decode(const EncodedVideoFrame& frame);
++private:
++    struct Impl;
++    std::unique_ptr<Impl> impl_;
++};
+
+diff --git a/src/FfmpegMediaDecoder.cpp b/src/FfmpegMediaDecoder.cpp
+index 0000000..0000000 100644
+--- a/src/FfmpegMediaDecoder.cpp
++++ b/src/FfmpegMediaDecoder.cpp
+@@
++// Copy FfmpegVp8Decoder implementation and replace:
++// FfmpegVp8Decoder -> FfmpegAv1Decoder
++// AV_CODEC_ID_VP8  -> AV_CODEC_ID_AV1
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@
++src/Av1RtpFrameAssembler.cpp

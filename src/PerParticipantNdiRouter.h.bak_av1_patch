@@ -1,7 +1,6 @@
 #pragma once
 
 #include "FfmpegMediaDecoder.h"
-#include "Av1RtpFrameAssembler.h"
 #include "JitsiSourceMap.h"
 #include "NDISender.h"
 #include "RtpPacket.h"
@@ -34,10 +33,7 @@ private:
         std::string displayName;
         std::unique_ptr<NDISender> ndi;
         Vp8RtpDepacketizer vp8;
-        Av1RtpFrameAssembler av1;
         FfmpegVp8Decoder videoDecoder;
-
-        FfmpegAv1Decoder av1Decoder;
         FfmpegOpusDecoder audioDecoder;
         std::uint64_t videoPackets = 0;
         std::uint64_t audioPackets = 0;

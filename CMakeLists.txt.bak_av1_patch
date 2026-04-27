@@ -37,8 +37,7 @@ set(SOURCES
     src/JitsiSourceMap.cpp
     src/Vp8RtpDepacketizer.cpp
     src/FfmpegMediaDecoder.cpp
-        src/Av1RtpFrameAssembler.cpp
-src/PerParticipantNdiRouter.cpp
+    src/PerParticipantNdiRouter.cpp
 )
 
 add_executable(jitsi-ndi-native ${SOURCES})
