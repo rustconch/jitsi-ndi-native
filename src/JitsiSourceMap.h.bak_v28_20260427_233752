@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <mutex>
@@ -21,7 +21,6 @@ class JitsiSourceMap {
 public:
     void updateFromJingleXml(const std::string& xml);
     void removeFromJingleXml(const std::string& xml);
-    void updateDisplayNamesFromXml(const std::string& xml);
 
     std::optional<JitsiSourceInfo> lookup(std::uint32_t ssrc) const;
     std::vector<JitsiSourceInfo> allSources() const;
@@ -32,6 +31,4 @@ public:
 private:
     mutable std::mutex mutex_;
     std::unordered_map<std::uint32_t, JitsiSourceInfo> bySsrc_;
-    std::unordered_map<std::string, std::string> displayNameByEndpoint_;
 };
-

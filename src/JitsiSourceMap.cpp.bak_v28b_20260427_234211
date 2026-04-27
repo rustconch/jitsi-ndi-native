@@ -125,7 +125,7 @@ std::vector<std::string> sourceNamesFromSourceInfo(const std::string& xml) {
         return out;
     }
 
-    const std::regex keyRe(R"KEY("([^"]+)"\s*:)KEY");
+    const std::regex keyRe(R"("([^"]+)"\s*:)");
     for (auto it = std::sregex_iterator(sourceInfo.begin(), sourceInfo.end(), keyRe);
          it != std::sregex_iterator();
          ++it) {
@@ -285,5 +285,4 @@ std::string JitsiSourceMap::sanitizeForNdiName(std::string value) {
     while (!value.empty() && value.back() == '_') value.pop_back();
     return value.empty() ? "unknown" : value;
 }
-
 

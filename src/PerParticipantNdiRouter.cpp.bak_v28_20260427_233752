@@ -170,8 +170,6 @@ void PerParticipantNdiRouter::updateSourcesFromJingleXml(const std::string& xml)
         updatePayloadTypesFromJingleXmlLocked(xml);
     }
 
-    sourceMap_.updateDisplayNamesFromXml(xml);
-
     if (xml.find("<source") == std::string::npos) {
         return;
     }
@@ -239,18 +237,10 @@ std::string PerParticipantNdiRouter::sourceNameFor(const JitsiSourceInfo& source
 
     const std::string videoType = toLower(source.videoType);
 
-    std::string humanName = source.displayName;
-    if (humanName.empty() || humanName == endpoint || isFallbackSsrcEndpoint(humanName)) {
-        humanName = endpoint;
-    }
-    if (humanName.empty()) {
-        humanName = !source.sourceName.empty() ? source.sourceName : "unknown";
-    }
-
     if (source.media == "video") {
-        // v28: NDI display name uses the participant nick/name, while the internal
-        // pipeline key still remains the stable Jitsi source name, e.g. endpoint-v0/v1.
-        label = humanName;
+        // v27: camera and screen share from one participant must be separate NDI sources.
+        // Jitsi source names are stable per media source: endpoint-v0 = camera, endpoint-v1 = desktop.
+        label = !source.sourceName.empty() ? source.sourceName : endpoint;
 
         if (videoType == "desktop" || videoType == "screen" || videoType == "screenshare") {
             label += " screen";
@@ -262,11 +252,17 @@ std::string PerParticipantNdiRouter::sourceNameFor(const JitsiSourceInfo& source
             label += " video";
         }
     } else if (source.media == "audio") {
-        // Audio is attached to the camera pipeline; if it creates the pipeline first,
-        // it must get the same human-readable NDI source name as the later camera video.
-        label = humanName + " camera";
+        // Keep participant audio attached to the participant camera pipeline.
+        // If audio arrives before video, this creates the same key/name that the camera will reuse later.
+        if (!endpoint.empty() && !isFallbackSsrcEndpoint(endpoint)) {
+            label = endpoint + "-v0 camera";
+        } else {
+            label = endpoint.empty() ? source.sourceName : endpoint;
+        }
     } else {
-        label = humanName;
+        label = source.displayName.empty()
+            ? (endpoint.empty() ? source.sourceName : endpoint)
+            : source.displayName;
     }
 
     const std::string safe = JitsiSourceMap::sanitizeForNdiName(label);
@@ -537,5 +533,4 @@ void PerParticipantNdiRouter::handleRtp(
         return;
     }
 }
-
 
