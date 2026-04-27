@@ -294,8 +294,8 @@ bool isSupportedAudioCodec(const JingleCodec& codec) {
 }
 
 bool isSupportedVideoCodec(const JingleCodec& codec) {
-    const std::string codecNameLower = toLower(codec.name);
-    return codecNameLower == "av1" || codecNameLower == "vp8";
+    // Force VP8. The current Windows FFmpeg build has no libdav1d and native AV1 fails.
+    return toLower(codec.name) == "vp8";
 }
 
 bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {

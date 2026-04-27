@@ -1,3 +1,54 @@
+$ErrorActionPreference = 'Stop'
+
+$root = Get-Location
+$jitsi = Join-Path $root 'src\JitsiSignaling.cpp'
+$jingle = Join-Path $root 'src\JingleSession.cpp'
+$decoder = Join-Path $root 'src\FfmpegMediaDecoder.cpp'
+
+foreach ($f in @($jitsi, $jingle, $decoder)) {
+  if (-not (Test-Path $f)) { throw "Missing file: $f. Run from repo root." }
+}
+
+$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+Copy-Item $jitsi "$jitsi.bak_v18_$stamp" -Force
+Copy-Item $jingle "$jingle.bak_v18_$stamp" -Force
+Copy-Item $decoder "$decoder.bak_v18_$stamp" -Force
+
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+# 1) Undo the VP8-only experiment. JVB kept sending AV1/PT=41 anyway, so we restore AV1 negotiation.
+$src = [System.IO.File]::ReadAllText($jitsi)
+$src = $src -replace 'vp8\s*,\s*opus', 'av1,vp8,opus'
+$src = $src -replace '<jitsi_participant_codecList>vp8,opus</jitsi_participant_codecList>', '<jitsi_participant_codecList>av1,vp8,opus</jitsi_participant_codecList>'
+$src = [regex]::Replace($src, '\r?\n\s*forceVp8Only\s*\(\s*session\s*\)\s*;', '', 1)
+$src = [regex]::Replace($src, '\r?\nvoid\s+forceVp8Only\s*\(\s*JingleSession&\s+session\s*\)\s*\{[\s\S]*?\r?\n\}\s*(?=\r?\n\}\s*//\s*namespace)', '', 1)
+[System.IO.File]::WriteAllText($jitsi, $src, $utf8NoBom)
+
+# 2) Restore AV1+VP8 as supported video codecs in JingleSession.cpp.
+$js = [System.IO.File]::ReadAllText($jingle)
+$restoreSupportedVideo = @'
+bool isSupportedVideoCodec(const JingleCodec& codec) {
+    const std::string codecNameLower = toLower(codec.name);
+    return codecNameLower == "av1" || codecNameLower == "vp8";
+}
+'@
+$js2 = [regex]::Replace(
+  $js,
+  'bool\s+isSupportedVideoCodec\s*\(\s*const\s+JingleCodec&\s+codec\s*\)\s*\{[\s\S]*?\}',
+  $restoreSupportedVideo,
+  1
+)
+if ($js2 -eq $js) {
+  Write-Host 'Warning: isSupportedVideoCodec() pattern was not found in JingleSession.cpp; leaving it as-is.'
+} else {
+  $js = $js2
+}
+[System.IO.File]::WriteAllText($jingle, $js, $utf8NoBom)
+
+# 3) Replace FFmpeg decoder wrapper with a build that strongly prefers libdav1d for AV1.
+#    The native FFmpeg AV1 decoder in the current local build reports HW pixel-format errors,
+#    so libdav1d is the reliable path for Jitsi AV1/PT=41.
+$decoderContent = @'
 #include "FfmpegMediaDecoder.h"
 #include "Logger.h"
 
@@ -411,3 +462,10 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 
     return out;
 }
+'@
+
+[System.IO.File]::WriteAllText($decoder, $decoderContent, $utf8NoBom)
+
+Write-Host 'v18 code patch applied.'
+Write-Host 'Rebuild now: cmake --build build --config Release'
+Write-Host 'If the log still says libdav1d decoder is not present, run install_ffmpeg_dav1d_v18.ps1, then rebuild.'

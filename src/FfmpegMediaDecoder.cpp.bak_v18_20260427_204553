@@ -1,20 +1,17 @@
-#include "FfmpegMediaDecoder.h"
+﻿#include "FfmpegMediaDecoder.h"
 #include "Logger.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
-#include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
 #include <libavutil/pixdesc.h>
-#include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -33,6 +30,7 @@ void throwIfNeg(int rc, const char* what) {
 
 AVPixelFormat chooseSoftwarePixelFormat(AVCodecContext*, const AVPixelFormat* pixFmts) {
     if (!pixFmts) return AV_PIX_FMT_NONE;
+
     for (const AVPixelFormat* p = pixFmts; *p != AV_PIX_FMT_NONE; ++p) {
         const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
         if (!desc) continue;
@@ -40,18 +38,24 @@ AVPixelFormat chooseSoftwarePixelFormat(AVCodecContext*, const AVPixelFormat* pi
             return *p;
         }
     }
+
+    // Last resort. Returning a HW format is better than AV_PIX_FMT_NONE, but this
+    // should not happen after forcing a software decoder.
     return pixFmts[0];
 }
 
 const AVCodec* findDecoder(AVCodecID id) {
     if (id == AV_CODEC_ID_AV1) {
+        // Important: avcodec_find_decoder(AV_CODEC_ID_AV1) can resolve to an AV1
+        // decoder path that tries hardware pixel formats on Windows. That produces:
+        // "Your platform doesn't support hardware accelerated AV1 decoding" and no
+        // decoded frames. Prefer libdav1d explicitly when it is available.
         if (const AVCodec* dav1d = avcodec_find_decoder_by_name("libdav1d")) {
             Logger::info("FfmpegMediaDecoder: using AV1 decoder libdav1d");
             return dav1d;
         }
-        Logger::warn("FfmpegMediaDecoder: libdav1d decoder is not present in this FFmpeg build. Native AV1 fallback may fail on Windows.");
         if (const AVCodec* nativeAv1 = avcodec_find_decoder_by_name("av1")) {
-            Logger::warn("FfmpegMediaDecoder: using native AV1 decoder fallback");
+            Logger::warn("FfmpegMediaDecoder: libdav1d not found; using native software AV1 decoder");
             return nativeAv1;
         }
     }
@@ -70,21 +74,15 @@ AVCodecContext* openDecoder(AVCodecID id) {
     AVCodecContext* ctx = avcodec_alloc_context3(codec);
     if (!ctx) throw std::runtime_error("avcodec_alloc_context3 failed");
 
+    // Always force software pixel formats for video. This prevents FFmpeg from
+    // selecting a Windows HW pixel format that cannot actually be used on the box.
     if (id == AV_CODEC_ID_AV1 || id == AV_CODEC_ID_VP8) {
         ctx->get_format = chooseSoftwarePixelFormat;
         ctx->thread_count = 0;
         ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-        ctx->hw_device_ctx = nullptr;
-        ctx->hw_frames_ctx = nullptr;
     }
 
-    AVDictionary* opts = nullptr;
-    if (id == AV_CODEC_ID_AV1) {
-        av_dict_set(&opts, "threads", "auto", 0);
-    }
-
-    const int rc = avcodec_open2(ctx, codec, &opts);
-    av_dict_free(&opts);
+    const int rc = avcodec_open2(ctx, codec, nullptr);
     if (rc < 0) {
         avcodec_free_context(&ctx);
         throwIfNeg(rc, "avcodec_open2");
@@ -110,11 +108,15 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
     std::vector<DecodedVideoFrameBGRA> out;
 
     if (!encoded.bytes.empty()) {
-        if (encoded.bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return out;
+        if (encoded.bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            return out;
+        }
 
         AVPacket* pkt = av_packet_alloc();
         if (!pkt) return out;
-        if (av_new_packet(pkt, static_cast<int>(encoded.bytes.size())) < 0) {
+
+        const int packetSize = static_cast<int>(encoded.bytes.size());
+        if (av_new_packet(pkt, packetSize) < 0) {
             av_packet_free(&pkt);
             return out;
         }
@@ -154,7 +156,12 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
 
         if (!sws || swsW != w || swsH != h || swsFmt != fmt) {
             if (sws) sws_freeContext(sws);
-            sws = sws_getContext(w, h, fmt, w, h, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            sws = sws_getContext(
+                w, h, fmt,
+                w, h, AV_PIX_FMT_BGRA,
+                SWS_BILINEAR,
+                nullptr, nullptr, nullptr
+            );
             swsW = w;
             swsH = h;
             swsFmt = fmt;
@@ -174,8 +181,8 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
 
         std::uint8_t* dstData[4] = { f.bgra.data(), nullptr, nullptr, nullptr };
         int dstLinesize[4] = { f.stride, 0, 0, 0 };
-        sws_scale(sws, frame->data, frame->linesize, 0, h, dstData, dstLinesize);
 
+        sws_scale(sws, frame->data, frame->linesize, 0, h, dstData, dstLinesize);
         out.push_back(std::move(f));
         av_frame_unref(frame);
     }
@@ -257,6 +264,7 @@ struct FfmpegOpusDecoder::Impl {
         dec = avcodec_alloc_context3(codec);
         if (!dec) throw std::runtime_error("avcodec_alloc_context3 failed");
 
+        // Raw RTP Opus has no container to provide this metadata.
         dec->sample_rate = 48000;
         av_channel_layout_default(&dec->ch_layout, 2);
 
@@ -295,12 +303,14 @@ struct FfmpegOpusDecoder::Impl {
             return;
         }
 
-        if (swr) swr_free(&swr);
+        if (swr) {
+            swr_free(&swr);
+        }
 
         int rc = swr_alloc_set_opts2(
             &swr,
             &outLayout,
-            AV_SAMPLE_FMT_FLTP,
+            AV_SAMPLE_FMT_FLTP, // NDI audio v2 expects float32 planar: L block, then R block.
             48000,
             &inLayout,
             inFormat,
@@ -332,6 +342,7 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return out;
+
     if (av_new_packet(pkt, static_cast<int>(payloadSize)) < 0) {
         av_packet_free(&pkt);
         return out;
@@ -365,7 +376,9 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
         }
 
         int outCapacity = swr_get_out_samples(impl_->swr, inSamples);
-        if (outCapacity <= 0) outCapacity = inSamples;
+        if (outCapacity <= 0) {
+            outCapacity = inSamples;
+        }
 
         DecodedAudioFrameFloat32Planar f;
         f.sampleRate = 48000;
@@ -392,15 +405,25 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
             f.planar.resize(static_cast<std::size_t>(f.channels) * static_cast<std::size_t>(converted));
 
             for (auto& sample : f.planar) {
-                if (!std::isfinite(sample)) sample = 0.0f;
-                else if (sample > 1.0f) sample = 1.0f;
-                else if (sample < -1.0f) sample = -1.0f;
+                if (!std::isfinite(sample)) {
+                    sample = 0.0f;
+                } else if (sample > 1.0f) {
+                    sample = 1.0f;
+                } else if (sample < -1.0f) {
+                    sample = -1.0f;
+                }
             }
 
             static std::uint64_t decodedAudioFrames = 0;
             ++decodedAudioFrames;
             if (decodedAudioFrames == 1 || (decodedAudioFrames % 500) == 0) {
-                Logger::info("FfmpegOpusDecoder: decoded audio frame samples=", f.samples, " channels=", f.channels, " format=fltp");
+                Logger::info(
+                    "FfmpegOpusDecoder: decoded audio frame samples=",
+                    f.samples,
+                    " channels=",
+                    f.channels,
+                    " format=fltp"
+                );
             }
 
             out.push_back(std::move(f));
