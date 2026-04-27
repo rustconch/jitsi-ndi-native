@@ -317,31 +317,18 @@ void PerParticipantNdiRouter::handleRtp(
     if (!source) {
         ++unknownSsrcPackets_;
 
-        // PATCH_V12_RECOVERY:
-        // Do not drop all media just because Jitsi changed/omitted SSRC metadata.
-        // The track MID still tells us whether the packet belongs to audio/video,
-        // so create a safe SSRC-based fallback NDI source and keep packets flowing.
-        JitsiSourceInfo fallback;
-        fallback.ssrc = rtp.ssrc;
-        fallback.media = (mid == "audio" || mid == "video") ? mid : "video";
-        fallback.endpointId = std::string("ssrc-") + RtpPacket::ssrcHex(rtp.ssrc);
-        fallback.displayName = fallback.endpointId;
-        fallback.sourceName = fallback.endpointId + (fallback.media == "audio" ? "-a0" : "-v0");
-
-        if (unknownSsrcPackets_ == 1 || (unknownSsrcPackets_ % 200) == 0) {
+        if ((unknownSsrcPackets_ % 500) == 0) {
             Logger::warn(
                 "PerParticipantNdiRouter: unknown SSRC ",
                 RtpPacket::ssrcHex(rtp.ssrc),
                 " mid=",
                 mid,
                 " pt=",
-                static_cast<int>(payloadType),
-                "; using fallback endpoint=",
-                fallback.endpointId
+                static_cast<int>(payloadType)
             );
         }
 
-        source = fallback;
+        return;
     }
 
     const std::string media = !source->media.empty() ? source->media : mid;

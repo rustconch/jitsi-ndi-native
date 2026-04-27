@@ -353,6 +353,7 @@ void JitsiSignaling::joinMuc() {
     // In current meet.jit.si rooms that is often AV1/PT=41, so advertise AV1 too.
     // Keep this XML well-formed; previous VP8-only patch left stray text after the tag.
     xml << "<jitsi_participant_codecList>av1,vp8,opus</jitsi_participant_codecList>";
+
     xml << "</presence>";
     sendRaw(xml.str());
 }

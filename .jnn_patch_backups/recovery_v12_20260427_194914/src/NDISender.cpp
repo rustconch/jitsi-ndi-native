@@ -26,9 +26,7 @@ bool NDISender::start() {
     NDIlib_send_create_t createDesc{};
     createDesc.p_ndi_name = sourceName_.c_str();
     createDesc.clock_video = false;
-    // PATCH_V12_AUDIO_QUEUE_CLOCK: let the SDK pace audio, but do it from a worker
-    // thread so the WebRTC RTP callback never blocks and video packets keep flowing.
-    createDesc.clock_audio = true;
+    createDesc.clock_audio = false; // Audio is paced by incoming WebRTC RTP; do not block the RTP callback thread
 
     ndiSend_ = NDIlib_send_create(&createDesc);
     if (!ndiSend_) {
@@ -36,8 +34,6 @@ bool NDISender::start() {
         NDIlib_destroy();
         return false;
     }
-
-    startAudioWorker();
 
     Logger::info("Real NDI sender started: ", sourceName_);
 #else
@@ -52,18 +48,11 @@ void NDISender::stop() {
     if (!started_) return;
 
 #if JNN_HAS_NDI
-    stopAudioWorker();
-
     if (ndiSend_) {
         NDIlib_send_destroy(static_cast<NDIlib_send_instance_t>(ndiSend_));
         ndiSend_ = nullptr;
     }
     NDIlib_destroy();
-#else
-    {
-        std::lock_guard<std::mutex> lock(audioMutex_);
-        audioQueue_.clear();
-    }
 #endif
 
     started_ = false;
@@ -127,29 +116,14 @@ bool NDISender::sendAudioFrame(const DecodedAudioFrameFloat32Planar& frame) {
     if (frame.sampleRate <= 0 || frame.channels <= 0 || frame.samples <= 0 || frame.planar.empty()) return false;
 
 #if JNN_HAS_NDI
-    {
-        std::lock_guard<std::mutex> lock(audioMutex_);
-
-        if (audioQueue_.size() >= kMaxAudioQueueFrames) {
-            audioQueue_.pop_front();
-            ++droppedQueuedAudioFrames_;
-
-            if (droppedQueuedAudioFrames_ == 1 || (droppedQueuedAudioFrames_ % 100) == 0) {
-                Logger::warn(
-                    "NDI audio queue overflow for ",
-                    sourceName_,
-                    "; dropped=",
-                    droppedQueuedAudioFrames_,
-                    " queueMax=",
-                    kMaxAudioQueueFrames
-                );
-            }
-        }
-
-        audioQueue_.push_back(frame);
-    }
-
-    audioCv_.notify_one();
+    NDIlib_audio_frame_v2_t audio{};
+    audio.sample_rate = frame.sampleRate;
+    audio.no_channels = frame.channels;
+    audio.no_samples = frame.samples;
+    audio.timecode = NDIlib_send_timecode_synthesize;
+    audio.p_data = const_cast<float*>(frame.planar.data());
+    audio.channel_stride_in_bytes = frame.samples * static_cast<int>(sizeof(float));
+    NDIlib_send_send_audio_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &audio);
 #else
     if ((sentAudioFrames_ % 500) == 0) {
         Logger::info("Mock NDI audio frame ", sentAudioFrames_, " ", sourceName_, " samples=", frame.samples);
@@ -159,61 +133,3 @@ bool NDISender::sendAudioFrame(const DecodedAudioFrameFloat32Planar& frame) {
     ++sentAudioFrames_;
     return true;
 }
-
-#if JNN_HAS_NDI
-void NDISender::startAudioWorker() {
-    audioStopRequested_.store(false);
-    audioWorkerRunning_.store(true);
-    audioThread_ = std::thread(&NDISender::audioWorkerLoop, this);
-}
-
-void NDISender::stopAudioWorker() {
-    audioStopRequested_.store(true);
-    audioCv_.notify_all();
-
-    if (audioThread_.joinable()) {
-        audioThread_.join();
-    }
-
-    audioWorkerRunning_.store(false);
-
-    std::lock_guard<std::mutex> lock(audioMutex_);
-    audioQueue_.clear();
-}
-
-void NDISender::audioWorkerLoop() {
-    while (true) {
-        DecodedAudioFrameFloat32Planar frame;
-
-        {
-            std::unique_lock<std::mutex> lock(audioMutex_);
-            audioCv_.wait(lock, [this]() {
-                return audioStopRequested_.load() || !audioQueue_.empty();
-            });
-
-            if (audioStopRequested_.load() && audioQueue_.empty()) {
-                break;
-            }
-
-            frame = std::move(audioQueue_.front());
-            audioQueue_.pop_front();
-        }
-
-        sendAudioFrameImmediate(frame);
-    }
-}
-
-void NDISender::sendAudioFrameImmediate(const DecodedAudioFrameFloat32Planar& frame) {
-    if (!ndiSend_) return;
-    if (frame.sampleRate <= 0 || frame.channels <= 0 || frame.samples <= 0 || frame.planar.empty()) return;
-
-    NDIlib_audio_frame_v2_t audio{};
-    audio.sample_rate = frame.sampleRate;
-    audio.no_channels = frame.channels;
-    audio.no_samples = frame.samples;
-    audio.timecode = NDIlib_send_timecode_synthesize;
-    audio.p_data = const_cast<float*>(frame.planar.data());
-    audio.channel_stride_in_bytes = frame.samples * static_cast<int>(sizeof(float));
-    NDIlib_send_send_audio_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &audio);
-}
-#endif

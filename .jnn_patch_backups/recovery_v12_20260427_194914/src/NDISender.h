@@ -3,14 +3,9 @@
 #include "DecodedMedia.h"
 #include "TestPattern.h"
 
-#include <atomic>
-#include <condition_variable>
-#include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <mutex>
+#include <memory>
 #include <string>
-#include <thread>
 
 class NDISender {
 public:
@@ -30,27 +25,10 @@ public:
     const std::string& sourceName() const { return sourceName_; }
 
 private:
-#if JNN_HAS_NDI
-    void audioWorkerLoop();
-    void startAudioWorker();
-    void stopAudioWorker();
-    void sendAudioFrameImmediate(const DecodedAudioFrameFloat32Planar& frame);
-#endif
-
     std::string sourceName_;
     bool started_ = false;
     std::uint64_t sentFrames_ = 0;
     std::uint64_t sentAudioFrames_ = 0;
-    std::uint64_t droppedQueuedAudioFrames_ = 0;
-
-    static constexpr std::size_t kMaxAudioQueueFrames = 50;
-
-    std::mutex audioMutex_;
-    std::condition_variable audioCv_;
-    std::deque<DecodedAudioFrameFloat32Planar> audioQueue_;
-    std::thread audioThread_;
-    std::atomic<bool> audioStopRequested_{false};
-    std::atomic<bool> audioWorkerRunning_{false};
 
 #if JNN_HAS_NDI
     void* ndiSend_ = nullptr;

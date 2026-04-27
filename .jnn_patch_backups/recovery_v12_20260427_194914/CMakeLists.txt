@@ -107,8 +107,6 @@ if (NOT JNN_NDI_SDK_DIR AND DEFINED ENV{NDI_HOME})
 endif()
 
 set(_ndi_guess_paths
-    "${CMAKE_CURRENT_SOURCE_DIR}/NDI 6 SDK"
-    "${CMAKE_CURRENT_SOURCE_DIR}/NDI SDK"
     "C:/Program Files/NDI/NDI 6 SDK"
     "C:/Program Files/NDI/NDI 5 SDK"
     "C:/Program Files/NewTek/NDI SDK"
@@ -128,28 +126,11 @@ find_library(
     PATH_SUFFIXES Lib/x64 Lib/x86 lib/x64 lib
 )
 
-find_file(
-    NDI_RUNTIME_DLL
-    NAMES Processing.NDI.Lib.x64.dll Processing.NDI.Lib.dll
-    HINTS ${JNN_NDI_SDK_DIR} ${_ndi_guess_paths}
-    PATH_SUFFIXES Bin/x64 Bin
-)
-
 if (JNN_WITH_REAL_NDI AND NDI_INCLUDE_DIR AND NDI_LIBRARY)
     message(STATUS "NDI SDK found: ${NDI_INCLUDE_DIR} / ${NDI_LIBRARY}")
     target_compile_definitions(jitsi-ndi-native PRIVATE JNN_HAS_NDI=1)
     target_include_directories(jitsi-ndi-native PRIVATE ${NDI_INCLUDE_DIR})
     target_link_libraries(jitsi-ndi-native PRIVATE ${NDI_LIBRARY})
-    if (NDI_RUNTIME_DLL)
-        add_custom_command(TARGET jitsi-ndi-native POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${NDI_RUNTIME_DLL}"
-                "$<TARGET_FILE_DIR:jitsi-ndi-native>"
-        )
-        message(STATUS "NDI runtime DLL will be copied: ${NDI_RUNTIME_DLL}")
-    else()
-        message(WARNING "NDI runtime DLL was not found; NDI source may not appear until Processing.NDI.Lib.x64.dll is next to the exe or in PATH")
-    endif()
 else()
     message(WARNING "NDI SDK not found. Building with mock NDI sender. Set -DJNN_NDI_SDK_DIR=... to enable real NDI.")
     target_compile_definitions(jitsi-ndi-native PRIVATE JNN_HAS_NDI=0)
