@@ -20,7 +20,6 @@
 
 #if JNN_WITH_NATIVE_WEBRTC
 #include <rtc/rtc.hpp>
-#include "RtpSourceRegistry.h"
 #endif
 
 namespace {
@@ -1135,8 +1134,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     Logger::info("NativeWebRTCAnswerer: setting remote Jitsi SDP-like offer");
 
     try {
-        RtpSourceRegistry::registerFromSdp(offerSdp); // AV_STABILITY_REGISTER_SDP_SSRC
-    pc->setRemoteDescription(rtc::Description(offerSdp, "offer"));
+        pc->setRemoteDescription(rtc::Description(offerSdp, "offer"));
         pc->setLocalDescription();
     } catch (const std::exception& e) {
         Logger::error("NativeWebRTCAnswerer: setRemote/setLocal failed: ", e.what());

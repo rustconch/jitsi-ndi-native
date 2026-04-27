@@ -10,22 +10,9 @@
 class Av1RtpFrameAssembler {
 public:
     std::vector<EncodedVideoFrame> pushRtp(const uint8_t* data, size_t size);
-    std::vector<EncodedVideoFrame> pushRtpPayload(uint16_t sequence, uint32_t timestamp, bool marker, const uint8_t* payload, size_t payloadSize);
-
     std::vector<EncodedVideoFrame> pushRtp(const std::vector<uint8_t>& packet) {
         return pushRtp(packet.data(), packet.size());
     }
-    // RTP_VIEW_HOTFIX: accept current project RtpPacketView-like objects carrying parsed RTP payload.
-    template <typename PacketView>
-    std::vector<EncodedVideoFrame> pushRtp(const PacketView& packet) {
-        return pushRtpPayload(
-            static_cast<uint16_t>(packet.sequenceNumber),
-            static_cast<uint32_t>(packet.timestamp),
-            static_cast<bool>(packet.marker),
-            reinterpret_cast<const uint8_t*>(packet.payload),
-            static_cast<size_t>(packet.payloadSize));
-    }
-
 
     // Compatibility aliases for older call sites.
     std::vector<EncodedVideoFrame> depacketize(const uint8_t* data, size_t size) {

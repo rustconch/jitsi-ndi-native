@@ -11,7 +11,6 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
-#include "RtpSourceRegistry.h"
 
 const JingleContent* JingleSession::contentByName(const std::string& name) const {
     for (const auto& c : contents) {
@@ -430,8 +429,6 @@ void appendSsrcLines(std::ostringstream& sdp, const JingleContent& c) {
     std::unordered_set<std::uint32_t> seen;
 
     for (const auto& src : c.sources) {
-        // AV_STABILITY_REGISTER_JINGLE_SSRC
-        RtpSourceRegistry::setSsrcOwner(static_cast<uint32_t>(src.ssrc), src.owner, src.name);
         if (src.ssrc == 0) {
             continue;
         }

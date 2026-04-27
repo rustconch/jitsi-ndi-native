@@ -80,37 +80,6 @@ std::vector<EncodedVideoFrame> Av1RtpFrameAssembler::pushRtp(const uint8_t* data
     return drainReorderBuffer();
 }
 
-
-std::vector<EncodedVideoFrame> Av1RtpFrameAssembler::pushRtpPayload(
-    uint16_t sequence,
-    uint32_t timestamp,
-    bool marker,
-    const uint8_t* payload,
-    size_t payloadSize) {
-
-    if (!payload || payloadSize == 0) {
-        return {};
-    }
-
-    if (!haveExpectedSeq_) {
-        haveExpectedSeq_ = true;
-        expectedSeq_ = sequence;
-    }
-
-    if (reorder_.find(sequence) != reorder_.end()) {
-        return {};
-    }
-
-    RtpPacket packet;
-    packet.sequence = sequence;
-    packet.timestamp = timestamp;
-    packet.marker = marker;
-    packet.payload.assign(payload, payload + payloadSize);
-    reorder_.emplace(packet.sequence, std::move(packet));
-
-    return drainReorderBuffer();
-}
-
 std::vector<EncodedVideoFrame> Av1RtpFrameAssembler::drainReorderBuffer() {
     std::vector<EncodedVideoFrame> out;
     while (!reorder_.empty()) {
