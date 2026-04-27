@@ -1,4 +1,4 @@
-﻿#include "NativeWebRTCAnswerer.h"
+#include "NativeWebRTCAnswerer.h"
 #include "Logger.h"
 
 #include <atomic>
@@ -441,7 +441,7 @@ std::string makeReceiverVideoConstraintsMessage(
     out << "{";
     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
     out << "\"lastN\":-1,";
-    out << "\"assumedBandwidthBps\":60000000,";
+    out << "\"assumedBandwidthBps\":20000000,";
     out << "\"selectedSources\":" << jsonStringArray(sourceNames) << ",";
     out << "\"onStageSources\":" << jsonStringArray(sourceNames) << ",";
     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << "},";
@@ -471,16 +471,9 @@ void sendReceiverVideoConstraints(
     const std::vector<std::string>& sourceNames,
     const std::string& reason
 ) {
-    Logger::info(
-        "NativeWebRTCAnswerer: requesting 1080p video constraints, sources=",
-        sourceNames.size(),
-        " reason=",
-        reason
-    );
-
     sendBridgeMessage(
         channel,
-        makeReceiverVideoConstraintsMessage(sourceNames, 1080),
+        makeReceiverVideoConstraintsMessage(sourceNames, 720),
         "ReceiverVideoConstraints/" + reason
     );
 }
@@ -543,10 +536,7 @@ void scheduleRepeatedVideoConstraintRefresh(
             6000,
             10000,
             15000,
-            20000,
-            30000,
-            45000,
-            60000
+            20000
         };
 
         for (const int delayMs : delaysMs) {

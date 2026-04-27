@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <string>
 
@@ -8,8 +8,8 @@ struct AppConfig {
     std::string ndiName = "JitsiNativeNDI";
     std::string nick = "probe123";
 
-    int width = 1920;
-    int height = 1080;
+    int width = 1280;
+    int height = 720;
     int fps = 30;
 
     bool realXmpp = true;
@@ -28,4 +28,3 @@ struct AppConfig {
 
 AppConfig parseArgs(int argc, char** argv);
 void printUsage();
-
