@@ -1,0 +1,140 @@
+--- src/NativeWebRTCAnswerer.cpp+++ src/NativeWebRTCAnswerer.cpp@@ -407,6 +407,30 @@     return values;
+ }
+ 
++
++std::vector<std::string> extractVideoSourcesMapSources(const std::string& text) {
++    std::vector<std::string> values;
++    std::set<std::string> seen;
++
++    // JVB VideoSourcesMap messages contain entries like:
++    // {"source":"endpoint-v0","owner":"endpoint",...}
++    // We only run this parser after checking colibriClass == VideoSourcesMap,
++    // so matching the plain "source" key is intentional and narrow enough here.
++    const std::regex sourceRe("\\\"source\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
++
++    for (auto it = std::sregex_iterator(text.begin(), text.end(), sourceRe);
++         it != std::sregex_iterator();
++         ++it) {
++        const std::string value = (*it)[1].str();
++
++        if (!value.empty() && seen.insert(value).second) {
++            values.push_back(value);
++        }
++    }
++
++    return values;
++}
++
+ std::string jsonStringArray(const std::vector<std::string>& values) {
+     std::ostringstream out;
+ 
+@@ -434,8 +458,8 @@         }
+ 
+         // Do not spend the high-quality budget on the JVB mixed placeholder.
+-        // We want real per-participant camera sources like 2eba7589-v0.
+-        if (name.size() >= 4 && name.compare(0, 4, "jvb-") == 0) {
++        // We want real per-participant sources like 2eba7589-v0.
++        if (startsWith(name, "jvb")) {
+             continue;
+         }
+ 
+@@ -460,23 +484,25 @@     int maxHeight
+ ) {
+     /*
+-        Equal speaker quality mode:
+-        - Every real source is both selected and on-stage.
+-        - Every real source gets the same maxHeight/maxFrameRate.
+-        - lastN is the exact real source count, so the bridge forwards all known NDI speakers.
+-        - defaultConstraints also stays high so newly added real sources are not immediately capped low.
++        Equal speaker priority mode:
++        - Every real source is selected, which moves all requested speakers to the top of JVB allocation.
++        - onStageSources is intentionally empty. Jitsi Meet also uses selectedSources for multiple pinned videos,
++          because on-stage is best for one primary tile, while selectedSources is safer for many equal-priority tiles.
++        - lastN=-1 asks the bridge not to cap the number of forwarded video sources on the receiver side.
++        - defaultConstraints stays high so newly added real sources are not immediately capped low.
+     */
+     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
+-    const int lastN = realSources.empty() ? -1 : static_cast<int>(realSources.size());
++    const int lastN = -1;
++    const std::vector<std::string> emptyOnStageSources;
+ 
+     std::ostringstream out;
+ 
+     out << "{";
+     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
+     out << "\"lastN\":" << lastN << ",";
+-    out << "\"assumedBandwidthBps\":100000000,";
++    out << "\"assumedBandwidthBps\":250000000,";
+     out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
+-    out << "\"onStageSources\":" << jsonStringArray(realSources) << ",";
++    out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
+     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
+     out << "\"constraints\":{";
+ 
+@@ -498,6 +524,17 @@ 
+     return out.str();
+ }
++void sendLastNUnlimited(
++    const std::shared_ptr<rtc::DataChannel>& channel,
++    const std::string& reason
++) {
++    sendBridgeMessage(
++        channel,
++        "{\"colibriClass\":\"LastNChangedEvent\",\"lastN\":-1}",
++        "LastN/unlimited/" + reason
++    );
++}
++
+ void sendReceiverVideoConstraints(
+     const std::shared_ptr<rtc::DataChannel>& channel,
+     const std::vector<std::string>& sourceNames,
+@@ -513,8 +550,10 @@         return;
+     }
+ 
++    sendLastNUnlimited(channel, reason);
++
+     Logger::info(
+-        "NativeWebRTCAnswerer: requesting equal 1080p/30fps constraints, realSources=",
++        "NativeWebRTCAnswerer: requesting equal-priority 1080p/30fps constraints, realSources=",
+         realSources.size(),
+         " reason=",
+         reason
+@@ -523,7 +562,7 @@     sendBridgeMessage(
+         channel,
+         makeReceiverVideoConstraintsMessage(realSources, 1080),
+-        "ReceiverVideoConstraints/equal-1080p/" + reason
++        "ReceiverVideoConstraints/equal-priority-1080p/" + reason
+     );
+ }
+ void sendReceiverAudioSubscriptionAll(
+@@ -868,6 +907,31 @@                 );
+ 
+                 sendReceiverAudioSubscriptionAll(bridgeChannel, "server-hello");
++
++                return;
++            }
++
++            if (text.find("\"colibriClass\":\"VideoSourcesMap\"") != std::string::npos) {
++                const auto sources = extractVideoSourcesMapSources(text);
++
++                if (!sources.empty()) {
++                    {
++                        std::lock_guard<std::mutex> lock(*latestForwardedSourcesMutex);
++                        *latestForwardedSources = sources;
++                    }
++
++                    Logger::info(
++                        "NativeWebRTCAnswerer: VideoSourcesMap parsed count=",
++                        sources.size(),
++                        "; sending all-source equal-priority constraints"
++                    );
++
++                    sendReceiverVideoConstraints(
++                        bridgeChannel,
++                        sources,
++                        "video-sources-map"
++                    );
++                }
+ 
+                 return;
+             }

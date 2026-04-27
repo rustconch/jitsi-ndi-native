@@ -15,6 +15,9 @@ $script:logLines = New-Object System.Collections.Generic.List[string]
 $script:eventSubscribers = @()
 $script:runId = 0
 $script:isStopping = $false
+$script:selectedExePath = $null
+$script:logDir = Join-Path $script:repoRoot "logs"
+$script:currentLogFile = $null
 
 function Convert-JitsiInputToRoom {
     param([string]$InputText)
@@ -84,6 +87,15 @@ function Append-Log {
             # UI is probably closing; ignore late log callbacks.
         }
         return
+    }
+
+    if ($script:currentLogFile) {
+        try {
+            $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
+            Add-Content -LiteralPath $script:currentLogFile -Value ("{0} {1}" -f $stamp, $line) -Encoding UTF8
+        } catch {
+            # Logging to file is helpful, but should never break the receiver.
+        }
     }
 
     $script:logLines.Add($line)
@@ -324,6 +336,78 @@ function Join-CliArgs {
 
 
 
+
+function Find-NativeExe {
+    $candidates = @(
+        (Join-Path $PSScriptRoot "build\Release\jitsi-ndi-native.exe"),
+        (Join-Path $PSScriptRoot "build-ndi\Release\jitsi-ndi-native.exe"),
+        (Join-Path $PSScriptRoot "build\RelWithDebInfo\jitsi-ndi-native.exe"),
+        (Join-Path $PSScriptRoot "build-ndi\RelWithDebInfo\jitsi-ndi-native.exe"),
+        (Join-Path $PSScriptRoot "jitsi-ndi-native.exe")
+    )
+
+    foreach ($p in $candidates) {
+        if (Test-Path $p) { return $p }
+    }
+
+    return (Join-Path $PSScriptRoot "build\Release\jitsi-ndi-native.exe")
+}
+
+function Set-ExePath {
+    param([string]$Path)
+
+    $script:selectedExePath = $Path
+
+    if ($lblExe -and -not $lblExe.IsDisposed) {
+        if ([string]::IsNullOrWhiteSpace($Path)) {
+            $lblExe.Text = "не выбран"
+        } elseif (Test-Path $Path) {
+            $lblExe.Text = "выбран: " + (Split-Path $Path -Leaf)
+        } else {
+            $lblExe.Text = "не найден: " + (Split-Path $Path -Leaf)
+        }
+    }
+}
+
+function Start-SessionLog {
+    try {
+        if (-not (Test-Path $script:logDir)) {
+            [void](New-Item -ItemType Directory -Path $script:logDir -Force)
+        }
+        $name = "jitsi-ndi-gui_{0}.log" -f (Get-Date).ToString("yyyyMMdd_HHmmss")
+        $script:currentLogFile = Join-Path $script:logDir $name
+        "# Jitsi NDI GUI session log" | Set-Content -LiteralPath $script:currentLogFile -Encoding UTF8
+        "# Started: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" | Add-Content -LiteralPath $script:currentLogFile -Encoding UTF8
+    } catch {
+        $script:currentLogFile = $null
+    }
+}
+
+function Open-LogFolder {
+    try {
+        if (-not (Test-Path $script:logDir)) {
+            [void](New-Item -ItemType Directory -Path $script:logDir -Force)
+        }
+        Start-Process explorer.exe $script:logDir
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Не удалось открыть папку логов.`n" + $_.Exception.Message, "Jitsi NDI GUI") | Out-Null
+    }
+}
+
+function Set-UiRunning {
+    param([bool]$Running)
+
+    foreach ($ctrl in @($txtRoom, $txtNick, $chkNickOnStart, $btnBrowse)) {
+        if ($ctrl -and -not $ctrl.IsDisposed) { $ctrl.Enabled = (-not $Running) }
+    }
+
+    if ($btnStart -and -not $btnStart.IsDisposed) { $btnStart.Enabled = (-not $Running) }
+    if ($btnStop -and -not $btnStop.IsDisposed) { $btnStop.Enabled = $Running }
+    if ($lblState -and -not $lblState.IsDisposed) {
+        if ($Running) { $lblState.Text = "Запущен" } else { $lblState.Text = "Остановлен" }
+    }
+}
+
 function Clear-ProcessEvents {
     foreach ($sub in @($script:eventSubscribers)) {
         try {
@@ -364,9 +448,14 @@ function Start-Receiver {
         return
     }
 
-    $exePath = $txtExe.Text.Trim()
+    $exePath = $script:selectedExePath
+    if ([string]::IsNullOrWhiteSpace($exePath)) {
+        $exePath = Find-NativeExe
+        Set-ExePath $exePath
+    }
+
     if (-not (Test-Path $exePath)) {
-        [System.Windows.Forms.MessageBox]::Show("Не найден exe:`n$exePath", "Jitsi NDI GUI") | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("Не найден jitsi-ndi-native.exe. Нажми Exe... и выбери рабочий exe из твоей сборки.", "Jitsi NDI GUI") | Out-Null
         return
     }
 
@@ -380,20 +469,14 @@ function Start-Receiver {
     $args.Add("--room")
     $args.Add($room)
 
-    if ($chkPassNativeFlags.Checked) {
+    # Keep the native/WebRTC/NDI path as close to the working build as possible.
+    # Do NOT pass --quality here: the uploaded native build does not implement it.
+    # Nick is applied only on join, so changing it requires Stop -> Start.
+    if ($chkNickOnStart.Checked) {
         $nick = (Sanitize-Name $txtNick.Text)
         if (-not [string]::IsNullOrWhiteSpace($nick)) {
             $args.Add("--nick")
             $args.Add($nick)
-        }
-
-        $q = [string]$cmbQuality.SelectedItem
-        if ($q -and $q -ne "current/native") {
-            $height = ($q -replace "[^\d]", "")
-            if ($height) {
-                $args.Add("--quality")
-                $args.Add($height)
-            }
         }
     }
 
@@ -412,8 +495,16 @@ function Start-Receiver {
     $script:rowsByKey.Clear()
     $grid.Rows.Clear()
     $txtLog.Clear()
+    Start-SessionLog
     Append-Log ("[GUI] Starting: " + $psi.FileName + " " + $psi.Arguments)
     Append-Log ("[GUI] Parsed room: " + $room)
+    if ($chkNickOnStart.Checked) {
+        Append-Log ("[GUI] Nick option is enabled. Nick applies only on join/restart.")
+    } else {
+        Append-Log ("[GUI] Nick option is disabled. Native will use its built-in default nick.")
+    }
+    Append-Log ("[GUI] Quality selector is monitoring-only in this GUI build; no quality flags are sent.")
+    if ($script:currentLogFile) { Append-Log ("[GUI] Session log file: " + $script:currentLogFile) }
 
     $script:proc = New-Object System.Diagnostics.Process
     $script:proc.StartInfo = $psi
@@ -453,9 +544,7 @@ function Start-Receiver {
         try { $code = $Event.Sender.ExitCode } catch {}
         Invoke-UiSafe {
             Append-Log "[GUI] Process exited with code $code"
-            $btnStart.Enabled = $true
-            $btnStop.Enabled = $false
-            $lblState.Text = "Остановлен"
+            Set-UiRunning $false
         }
     }
     $script:eventSubscribers += $subExit
@@ -465,13 +554,10 @@ function Start-Receiver {
         $script:proc.BeginOutputReadLine()
         $script:proc.BeginErrorReadLine()
 
-        $btnStart.Enabled = $false
-        $btnStop.Enabled = $true
-        $lblState.Text = "Запущен"
+        Set-UiRunning $true
     } catch {
         Append-Log ("[GUI][ERROR] " + $_.Exception.Message)
-        $btnStart.Enabled = $true
-        $btnStop.Enabled = $false
+        Set-UiRunning $false
         $lblState.Text = "Ошибка запуска"
     }
 }
@@ -500,9 +586,7 @@ function Stop-Receiver {
     } catch {}
     $script:proc = $null
 
-    if ($btnStart -and -not $btnStart.IsDisposed) { $btnStart.Enabled = $true }
-    if ($btnStop -and -not $btnStop.IsDisposed) { $btnStop.Enabled = $false }
-    if ($lblState -and -not $lblState.IsDisposed) { $lblState.Text = "Остановлен" }
+    Set-UiRunning $false
 }
 
 # ---------------- UI ----------------
@@ -547,23 +631,38 @@ $top.Controls.Add($txtRoom, 1, 0)
 $top.SetColumnSpan($txtRoom, 5)
 
 Add-Label "Exe:" 1 0 | Out-Null
-$txtExe = New-Object System.Windows.Forms.TextBox
-$txtExe.Dock = "Fill"
-$txtExe.Text = (Join-Path $PSScriptRoot "build\Release\jitsi-ndi-native.exe")
-$top.Controls.Add($txtExe, 1, 1)
-$top.SetColumnSpan($txtExe, 3)
+$lblExe = New-Object System.Windows.Forms.Label
+$lblExe.Dock = "Fill"
+$lblExe.TextAlign = "MiddleLeft"
+$lblExe.Text = "автопоиск..."
+$top.Controls.Add($lblExe, 1, 1)
+$top.SetColumnSpan($lblExe, 3)
 
 $btnBrowse = New-Object System.Windows.Forms.Button
-$btnBrowse.Text = "Обзор..."
+$btnBrowse.Text = "Exe..."
 $btnBrowse.Dock = "Fill"
 $btnBrowse.Add_Click({
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
     $dlg.Filter = "jitsi-ndi-native.exe|jitsi-ndi-native.exe|Exe files|*.exe|All files|*.*"
-    $dlg.InitialDirectory = Split-Path $txtExe.Text -Parent
-    if ($dlg.ShowDialog() -eq "OK") { $txtExe.Text = $dlg.FileName }
+    $initial = $PSScriptRoot
+    if (-not [string]::IsNullOrWhiteSpace($script:selectedExePath)) {
+        try {
+            $candidateDir = Split-Path $script:selectedExePath -Parent
+            if ($candidateDir -and (Test-Path $candidateDir)) { $initial = $candidateDir }
+        } catch {}
+    }
+    $dlg.InitialDirectory = $initial
+    if ($dlg.ShowDialog() -eq "OK") { Set-ExePath $dlg.FileName }
 })
 $top.Controls.Add($btnBrowse, 4, 1)
-$top.SetColumnSpan($btnBrowse, 2)
+
+$btnLogs = New-Object System.Windows.Forms.Button
+$btnLogs.Text = "Логи"
+$btnLogs.Dock = "Fill"
+$btnLogs.Add_Click({ Open-LogFolder })
+$top.Controls.Add($btnLogs, 5, 1)
+
+Set-ExePath (Find-NativeExe)
 
 Add-Label "Ник в Jitsi:" 2 0 | Out-Null
 $txtNick = New-Object System.Windows.Forms.TextBox
@@ -575,19 +674,18 @@ Add-Label "Качество:" 2 2 | Out-Null
 $cmbQuality = New-Object System.Windows.Forms.ComboBox
 $cmbQuality.Dock = "Fill"
 $cmbQuality.DropDownStyle = "DropDownList"
-[void]$cmbQuality.Items.Add("current/native")
-[void]$cmbQuality.Items.Add("720p")
-[void]$cmbQuality.Items.Add("1080p")
-[void]$cmbQuality.Items.Add("2160p")
+[void]$cmbQuality.Items.Add("только мониторинг")
+[void]$cmbQuality.Items.Add("управление качеством пока не поддерживается native")
 $cmbQuality.SelectedIndex = 0
+$cmbQuality.Enabled = $false
 $top.Controls.Add($cmbQuality, 3, 2)
 
-$chkPassNativeFlags = New-Object System.Windows.Forms.CheckBox
-$chkPassNativeFlags.Text = "передавать --nick/--quality"
-$chkPassNativeFlags.Dock = "Fill"
-$chkPassNativeFlags.Checked = $false
-$top.Controls.Add($chkPassNativeFlags, 4, 2)
-$top.SetColumnSpan($chkPassNativeFlags, 2)
+$chkNickOnStart = New-Object System.Windows.Forms.CheckBox
+$chkNickOnStart.Text = "передать ник при следующем старте"
+$chkNickOnStart.Dock = "Fill"
+$chkNickOnStart.Checked = $true
+$top.Controls.Add($chkNickOnStart, 4, 2)
+$top.SetColumnSpan($chkNickOnStart, 2)
 
 $btnStart = New-Object System.Windows.Forms.Button
 $btnStart.Text = "Старт"
@@ -675,7 +773,8 @@ $form.Add_FormClosing({
     Stop-Receiver
 })
 
-Append-Log "[GUI v29-fix2] Готово. Вставь ссылку Jitsi и нажми Старт."
-Append-Log "[GUI] Примечание: --nick/--quality включай только после добавления этих флагов в native exe."
+Append-Log "[GUI v33-interface-only] Готово. Вставь ссылку Jitsi и нажми Старт."
+Append-Log "[GUI] Основа запуска сохранена: GUI не передаёт --quality и не меняет WebRTC/NDI-часть."
+Append-Log "[GUI] Ник применяется только при новом входе в комнату: измени ник, затем Стоп -> Старт."
 
 [void][System.Windows.Forms.Application]::Run($form)
