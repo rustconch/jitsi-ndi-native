@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <exception>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -27,24 +28,24 @@ std::string xmlEscape(const std::string& s) {
 
     for (char c : s) {
         switch (c) {
-            case '&':
-                out += "&amp;";
-                break;
-            case '<':
-                out += "&lt;";
-                break;
-            case '>':
-                out += "&gt;";
-                break;
-            case '\'':
-                out += "&apos;";
-                break;
-            case '"':
-                out += "&quot;";
-                break;
-            default:
-                out += c;
-                break;
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '\'':
+            out += "&apos;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        default:
+            out += c;
+            break;
         }
     }
 
@@ -137,6 +138,24 @@ bool tryParseUint32(const std::string& s, std::uint32_t& out) {
     }
 }
 
+bool isSelfClosingTag(const std::string& tag) {
+    for (auto it = tag.rbegin(); it != tag.rend(); ++it) {
+        const unsigned char ch = static_cast<unsigned char>(*it);
+
+        if (*it == '>') {
+            continue;
+        }
+
+        if (std::isspace(ch)) {
+            continue;
+        }
+
+        return *it == '/';
+    }
+
+    return false;
+}
+
 std::string elementText(const std::string& xml, const std::string& tagName) {
     const std::regex re(
         R"(<\s*)" + tagName + R"((?=[\s>/])[^>]*>([\s\S]*?)</\s*)" + tagName + R"(\s*>)",
@@ -154,34 +173,56 @@ std::string elementText(const std::string& xml, const std::string& tagName) {
 
 std::vector<std::string> findElementBlocks(const std::string& xml, const std::string& tagName) {
     std::vector<std::string> blocks;
+    std::vector<std::string> selfClosingBlocks;
 
-    const std::regex closedRe(
-        R"(<\s*)" + tagName + R"((?=[\s>/])[^>]*>[\s\S]*?</\s*)" + tagName + R"(\s*>)",
+    const std::regex startRe(tagStartPattern(tagName), std::regex::icase);
+    const std::regex closeRe(
+        R"(</\s*)" + tagName + R"(\s*>)",
         std::regex::icase
     );
 
-    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), closedRe);
-         it != std::sregex_iterator();
-         ++it) {
-        blocks.push_back((*it)[0].str());
+    std::size_t pos = 0;
+
+    while (pos < xml.size()) {
+        const std::string tail = xml.substr(pos);
+
+        std::smatch startMatch;
+
+        if (!std::regex_search(tail, startMatch, startRe)) {
+            break;
+        }
+
+        const std::size_t startPos = pos + static_cast<std::size_t>(startMatch.position(0));
+        const std::string startTag = startMatch[0].str();
+        const std::size_t afterStart = startPos + startTag.size();
+
+        if (isSelfClosingTag(startTag)) {
+            selfClosingBlocks.push_back(startTag);
+            pos = afterStart;
+            continue;
+        }
+
+        const std::string rest = xml.substr(afterStart);
+
+        std::smatch closeMatch;
+
+        if (!std::regex_search(rest, closeMatch, closeRe)) {
+            pos = afterStart;
+            continue;
+        }
+
+        const std::size_t closeStart = afterStart + static_cast<std::size_t>(closeMatch.position(0));
+        const std::size_t endPos = closeStart + closeMatch[0].str().size();
+
+        blocks.push_back(xml.substr(startPos, endPos - startPos));
+        pos = endPos;
     }
 
     if (!blocks.empty()) {
         return blocks;
     }
 
-    const std::regex selfClosingRe(
-        R"(<\s*)" + tagName + R"((?=[\s>/])[^>]*/\s*>)",
-        std::regex::icase
-    );
-
-    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), selfClosingRe);
-         it != std::sregex_iterator();
-         ++it) {
-        blocks.push_back((*it)[0].str());
-    }
-
-    return blocks;
+    return selfClosingBlocks;
 }
 
 std::vector<std::string> findSourceBlocks(const std::string& xml) {
@@ -199,6 +240,105 @@ std::vector<std::string> findSourceBlocks(const std::string& xml) {
     }
 
     return blocks;
+}
+
+bool isAudioContent(const JingleContent& c) {
+    return c.name == "audio" || c.media == "audio";
+}
+
+bool isVideoContent(const JingleContent& c) {
+    return c.name == "video" || c.media == "video";
+}
+
+bool isFocusOrBridgeSession(const JingleSession& session) {
+    /*
+        Critical fix.
+
+        meet.jit.si can send two different Jingle session-initiate flows:
+
+        1. Focus/JVB session:
+           from = room@conference.meet.jit.si/focus
+           bridge-session id is present.
+           This is the one we need.
+
+        2. Direct endpoint/P2P session:
+           from = room@conference.meet.jit.si/<participant-id>
+           bridge-session is absent.
+           content names are often "0" and "1".
+           We MUST NOT create our native PeerConnection for this one,
+           otherwise it resets the already working JVB PeerConnection.
+    */
+
+    if (!session.bridgeSessionId.empty()) {
+        return true;
+    }
+
+    if (session.from.find("/focus") != std::string::npos) {
+        return true;
+    }
+
+    if (session.from.find("focus.meet.jit.si") != std::string::npos) {
+        return true;
+    }
+
+    if (session.initiator.find("focus@auth.") != std::string::npos) {
+        return true;
+    }
+
+    return false;
+}
+
+bool isSupportedAudioCodec(const JingleCodec& codec) {
+    return toLower(codec.name) == "opus";
+}
+
+bool isSupportedVideoCodec(const JingleCodec& codec) {
+    const std::string name = toLower(codec.name);
+
+    /*
+        Important fix.
+
+        Our current media path decodes only VP8. If session-accept advertises
+        AV1/H264/VP9, JVB may legally send AV1 pt=41, H264 or VP9, and then
+        PerParticipantNdiRouter drops the packets as non-VP8.
+
+        Therefore both synthetic SDP and Jingle session-accept must expose
+        only VP8 for video.
+    */
+    return name == "vp8";
+}
+
+bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {
+    if (codec.payloadType < 0 || codec.name.empty() || codec.clockRate <= 0) {
+        return false;
+    }
+
+    if (isAudioContent(c)) {
+        return isSupportedAudioCodec(codec);
+    }
+
+    if (isVideoContent(c)) {
+        return isSupportedVideoCodec(codec);
+    }
+
+    return false;
+}
+
+std::vector<int> supportedPayloadTypesForContent(const JingleContent& c) {
+    std::vector<int> pts;
+    std::set<int> seen;
+
+    for (const auto& codec : c.codecs) {
+        if (!isSupportedCodecForContent(c, codec)) {
+            continue;
+        }
+
+        if (seen.insert(codec.payloadType).second) {
+            pts.push_back(codec.payloadType);
+        }
+    }
+
+    return pts;
 }
 
 JingleCandidate parseCandidateTag(const std::string& tag) {
@@ -271,47 +411,31 @@ void appendRtpmap(std::ostringstream& sdp, const JingleCodec& codec) {
     sdp << "\r\n";
 }
 
-bool isSupportedAudioCodec(const JingleCodec& codec) {
-    return toLower(codec.name) == "opus";
-}
+void appendCodecFmtpSdp(std::ostringstream& sdp, const JingleContent& c, const JingleCodec& codec) {
+    const std::string codecNameLower = toLower(codec.name);
 
-bool isSupportedVideoCodec(const JingleCodec& codec) {
-    // The current native RTP/decode pipeline is VP8-oriented.
-    // Keep AV1/VP9/H264 out of negotiation for now.
-    return toLower(codec.name) == "vp8";
-}
+    if (isAudioContent(c) && codecNameLower == "opus") {
+        sdp
+            << "a=fmtp:"
+            << codec.payloadType
+            << " minptime=10;useinbandfec=1"
+            << "\r\n";
 
-std::vector<int> supportedPayloadTypesForContent(const JingleContent& c) {
-    std::vector<int> pts;
-
-    for (const auto& codec : c.codecs) {
-        if (codec.payloadType < 0 || codec.name.empty()) {
-            continue;
-        }
-
-        if (c.name == "audio" || c.media == "audio") {
-            if (!isSupportedAudioCodec(codec)) {
-                continue;
-            }
-        } else if (c.name == "video" || c.media == "video") {
-            if (!isSupportedVideoCodec(codec)) {
-                continue;
-            }
-        } else {
-            continue;
-        }
-
-        pts.push_back(codec.payloadType);
+        return;
     }
+}
 
-    return pts;
+void appendVideoRtcpFbSdp(std::ostringstream& sdp, const JingleCodec& codec) {
+    sdp << "a=rtcp-fb:" << codec.payloadType << " nack\r\n";
+    sdp << "a=rtcp-fb:" << codec.payloadType << " nack pli\r\n";
+    sdp << "a=rtcp-fb:" << codec.payloadType << " ccm fir\r\n";
 }
 
 void appendSsrcLines(std::ostringstream& sdp, const JingleContent& c) {
     std::unordered_set<std::uint32_t> seen;
 
     for (const auto& src : c.sources) {
-        if (src.ssrc == 0 || src.name.empty()) {
+        if (src.ssrc == 0) {
             continue;
         }
 
@@ -319,9 +443,9 @@ void appendSsrcLines(std::ostringstream& sdp, const JingleContent& c) {
             continue;
         }
 
-        const std::string cname = src.name;
-        const std::string msid = src.name;
-        const std::string trackId = src.name + "-track";
+        const std::string cname = src.name.empty() ? std::to_string(src.ssrc) : src.name;
+        const std::string msid = src.name.empty() ? cname : src.name;
+        const std::string trackId = msid + "-track";
 
         sdp << "a=ssrc:" << src.ssrc << " cname:" << cname << "\r\n";
         sdp << "a=ssrc:" << src.ssrc << " msid:" << msid << " " << trackId << "\r\n";
@@ -358,6 +482,18 @@ void appendCandidatesAndEnd(std::ostringstream& sdp, const JingleContent& c) {
     sdp << "a=end-of-candidates\r\n";
 }
 
+void appendMediaExtmapsSdp(std::ostringstream& sdp, const JingleContent& c) {
+    if (isAudioContent(c)) {
+        sdp << "a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n";
+        return;
+    }
+
+    if (isVideoContent(c)) {
+        sdp << "a=extmap:3 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n";
+        return;
+    }
+}
+
 void appendMediaSectionSdp(std::ostringstream& sdp, const JingleContent& c) {
     const auto pts = supportedPayloadTypesForContent(c);
 
@@ -377,20 +513,17 @@ void appendMediaSectionSdp(std::ostringstream& sdp, const JingleContent& c) {
     sdp << "c=IN IP4 0.0.0.0\r\n";
     sdp << "a=mid:" << c.name << "\r\n";
 
-    // This synthetic SDP is fed to libdatachannel as the REMOTE offer.
-    // Remote Jitsi/JVB should send media to us; our client receives only.
+    /*
+        This synthetic SDP is fed to libdatachannel as the REMOTE offer.
+        JVB is the sender. We are the receiver.
+    */
     sdp << "a=sendonly\r\n";
 
     sdp << "a=rtcp-mux\r\n";
     sdp << "a=rtcp-rsize\r\n";
 
     appendCommonIceDtlsSdp(sdp, c);
-
-    if (c.name == "audio" || c.media == "audio") {
-        sdp << "a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n";
-    } else if (c.name == "video" || c.media == "video") {
-        sdp << "a=extmap:3 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n";
-    }
+    appendMediaExtmapsSdp(sdp, c);
 
     for (const auto& codec : c.codecs) {
         if (std::find(pts.begin(), pts.end(), codec.payloadType) == pts.end()) {
@@ -398,17 +531,10 @@ void appendMediaSectionSdp(std::ostringstream& sdp, const JingleContent& c) {
         }
 
         appendRtpmap(sdp, codec);
+        appendCodecFmtpSdp(sdp, c, codec);
 
-        const std::string codecName = toLower(codec.name);
-
-        if ((c.name == "audio" || c.media == "audio") && codecName == "opus") {
-            sdp << "a=fmtp:" << codec.payloadType << " minptime=10;useinbandfec=1\r\n";
-        }
-
-        if (c.name == "video" || c.media == "video") {
-            sdp << "a=rtcp-fb:" << codec.payloadType << " nack\r\n";
-            sdp << "a=rtcp-fb:" << codec.payloadType << " nack pli\r\n";
-            sdp << "a=rtcp-fb:" << codec.payloadType << " ccm fir\r\n";
+        if (isVideoContent(c)) {
+            appendVideoRtcpFbSdp(sdp, codec);
         }
     }
 
@@ -416,17 +542,32 @@ void appendMediaSectionSdp(std::ostringstream& sdp, const JingleContent& c) {
     appendCandidatesAndEnd(sdp, c);
 }
 
+void appendVideoRtcpFbXml(std::ostringstream& xml) {
+    xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='ccm' subtype='fir'/>";
+    xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack'/>";
+    xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack' subtype='pli'/>";
+}
+
+void appendCodecParametersXml(std::ostringstream& xml, const JingleContent& c, const JingleCodec& codec) {
+    const std::string codecNameLower = toLower(codec.name);
+
+    if (isAudioContent(c) && codecNameLower == "opus") {
+        xml << "<parameter name='minptime' value='10'/>";
+        xml << "<parameter name='useinbandfec' value='1'/>";
+        return;
+    }
+
+    /*
+        No H264 parameters here anymore because this native receiver currently
+        accepts only VP8 for video.
+    */
+}
+
 void appendCodecAcceptXml(std::ostringstream& xml, const JingleContent& c) {
     bool wroteCodec = false;
 
     for (const auto& codec : c.codecs) {
-        const std::string codecNameLower = toLower(codec.name);
-
-        if ((c.name == "audio" || c.media == "audio") && codecNameLower != "opus") {
-            continue;
-        }
-
-        if ((c.name == "video" || c.media == "video") && codecNameLower != "vp8") {
+        if (!isSupportedCodecForContent(c, codec)) {
             continue;
         }
 
@@ -439,31 +580,46 @@ void appendCodecAcceptXml(std::ostringstream& xml, const JingleContent& c) {
             << codec.clockRate
             << "'";
 
-        if (codec.channels > 0) {
+        /*
+            For video, do not write channels='1'.
+            Some browsers/Jitsi payload descriptions include it, but putting it
+            into our accept is unnecessary and can make the answer less normal.
+        */
+        if (isAudioContent(c) && codec.channels > 0) {
             xml << " channels='" << codec.channels << "'";
         }
 
         xml << ">";
 
-        if (c.name == "audio" || c.media == "audio") {
-            xml << "<parameter name='minptime' value='10'/>";
-            xml << "<parameter name='useinbandfec' value='1'/>";
-        }
+        appendCodecParametersXml(xml, c, codec);
 
-        if (c.name == "video" || c.media == "video") {
-            xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='ccm' subtype='fir'/>";
-            xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack'/>";
-            xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack' subtype='pli'/>";
+        if (isVideoContent(c)) {
+            appendVideoRtcpFbXml(xml);
         }
 
         xml << "</payload-type>";
 
         wroteCodec = true;
-        break;
     }
 
     if (!wroteCodec) {
         Logger::warn("JingleSession: no supported codec written in session-accept for content=", c.name);
+    }
+}
+
+void appendMediaExtmapsXml(std::ostringstream& xml, const JingleContent& c) {
+    if (isAudioContent(c)) {
+        xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' id='1' uri='urn:ietf:params:rtp-hdrext:ssrc-audio-level'/>";
+        return;
+    }
+
+    if (isVideoContent(c)) {
+        /*
+            Keep only abs-send-time for VP8.
+            Do not advertise AV1 dependency-descriptor or video-layers-allocation.
+        */
+        xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' id='3' uri='http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time'/>";
+        return;
     }
 }
 
@@ -481,16 +637,11 @@ void appendMediaAcceptContentXml(
 
     xml
         << "<description xmlns='urn:xmpp:jingle:apps:rtp:1' media='"
-        << xmlEscape(c.media.empty() ? c.name : c.media)
+        << xmlEscape(isAudioContent(c) ? "audio" : "video")
         << "'>";
 
     appendCodecAcceptXml(xml, c);
-
-    if (c.name == "audio" || c.media == "audio") {
-        xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' id='1' uri='urn:ietf:params:rtp-hdrext:ssrc-audio-level'/>";
-    } else if (c.name == "video" || c.media == "video") {
-        xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' id='3' uri='http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time'/>";
-    }
+    appendMediaExtmapsXml(xml, c);
 
     xml << "<extmap-allow-mixed xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0'/>";
     xml << "<rtcp-mux/>";
@@ -564,6 +715,32 @@ bool parseJingleSessionInitiate(const std::string& xml, JingleSession& out) {
 
     out.bridgeSessionId = attrValue(bridgeTag, "id");
     out.region = attrValue(bridgeTag, "region");
+
+    /*
+        Main fix:
+        Do not treat direct endpoint-to-endpoint Jingle offers as our main media session.
+
+        In your log these bad/direct offers look like:
+            from='...@conference.meet.jit.si/a861d8f6'
+            bridge=
+            content name='0'
+            content name='1'
+
+        Accepting them resets the working focus/JVB PeerConnection.
+    */
+    if (!isFocusOrBridgeSession(out)) {
+        Logger::warn(
+            "JingleSession: ignoring direct endpoint/P2P session-initiate from=",
+            out.from,
+            " initiator=",
+            out.initiator,
+            " sid=",
+            out.sid,
+            " because this native receiver only accepts focus/JVB sessions"
+        );
+
+        return false;
+    }
 
     for (const auto& block : findElementBlocks(xml, "content")) {
         JingleContent content;
@@ -641,6 +818,14 @@ bool parseJingleSessionInitiate(const std::string& xml, JingleSession& out) {
             if (src.owner.empty()) {
                 const std::string ssrcInfoTag = findFirstTag(sourceBlock, "ssrc-info");
                 src.owner = attrValue(ssrcInfoTag, "owner");
+            }
+
+            /*
+                Ignore <source ssrc='...'> entries from <ssrc-group>.
+                They duplicate real source lines and have no name/owner/videoType.
+            */
+            if (src.name.empty() && src.owner.empty() && src.videoType.empty()) {
+                continue;
             }
 
             content.sources.push_back(src);
@@ -765,9 +950,11 @@ std::string buildSdpOfferFromJingle(const JingleSession& session) {
     std::ostringstream sdp;
 
     const JingleContent* transportRef = session.contentByName("audio");
+
     if (!transportRef) {
         transportRef = session.contentByName("video");
     }
+
     if (!transportRef && !session.contents.empty()) {
         transportRef = &session.contents.front();
     }
@@ -778,125 +965,22 @@ std::string buildSdpOfferFromJingle(const JingleSession& session) {
     sdp << "t=0 0\r\n";
 
     sdp << "a=group:BUNDLE";
+
     for (const auto& c : session.contents) {
-        if (!c.name.empty()) {
+        if (!c.name.empty() && (isAudioContent(c) || isVideoContent(c))) {
             sdp << " " << c.name;
         }
     }
-    sdp << " data\r\n";
 
+    sdp << " data\r\n";
     sdp << "a=msid-semantic: WMS *\r\n";
 
     for (const auto& c : session.contents) {
-        std::vector<int> pts;
-
-        for (const auto& codec : c.codecs) {
-            const std::string codecNameLower = toLower(codec.name);
-
-            if (c.name == "audio" || c.media == "audio") {
-                if (codecNameLower != "opus") {
-                    continue;
-                }
-            } else if (c.name == "video" || c.media == "video") {
-                if (codecNameLower != "vp8") {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            if (codec.payloadType >= 0) {
-                pts.push_back(codec.payloadType);
-            }
-        }
-
-        if (pts.empty()) {
-            Logger::warn("JingleSession: no supported payload types for content name=", c.name);
+        if (!isAudioContent(c) && !isVideoContent(c)) {
             continue;
         }
 
-        sdp << "m=" << c.name << " 9 UDP/TLS/RTP/SAVPF";
-        for (int pt : pts) {
-            sdp << " " << pt;
-        }
-        sdp << "\r\n";
-
-        sdp << "c=IN IP4 0.0.0.0\r\n";
-        sdp << "a=mid:" << c.name << "\r\n";
-
-        // This SDP is used as REMOTE offer for libdatachannel.
-        // JVB is the sender, we are the receiver.
-        sdp << "a=sendonly\r\n";
-
-        sdp << "a=rtcp-mux\r\n";
-        sdp << "a=rtcp-rsize\r\n";
-
-        if (!c.iceUfrag.empty()) {
-            sdp << "a=ice-ufrag:" << c.iceUfrag << "\r\n";
-        }
-        if (!c.icePwd.empty()) {
-            sdp << "a=ice-pwd:" << c.icePwd << "\r\n";
-        }
-        if (!c.fingerprint.empty()) {
-            sdp << "a=fingerprint:" << (c.fingerprintHash.empty() ? "sha-256" : c.fingerprintHash)
-                << " " << c.fingerprint << "\r\n";
-        }
-
-        sdp << "a=setup:actpass\r\n";
-        sdp << "a=ice-options:trickle\r\n";
-
-        if (c.name == "audio" || c.media == "audio") {
-            sdp << "a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n";
-        } else if (c.name == "video" || c.media == "video") {
-            sdp << "a=extmap:3 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n";
-        }
-
-        for (const auto& codec : c.codecs) {
-            if (std::find(pts.begin(), pts.end(), codec.payloadType) == pts.end()) {
-                continue;
-            }
-
-            appendRtpmap(sdp, codec);
-
-            const std::string codecNameLower = toLower(codec.name);
-
-            if (codecNameLower == "opus") {
-                sdp << "a=fmtp:" << codec.payloadType << " minptime=10;useinbandfec=1\r\n";
-            }
-
-            if (c.name == "video" || c.media == "video") {
-                sdp << "a=rtcp-fb:" << codec.payloadType << " nack\r\n";
-                sdp << "a=rtcp-fb:" << codec.payloadType << " nack pli\r\n";
-                sdp << "a=rtcp-fb:" << codec.payloadType << " ccm fir\r\n";
-            }
-        }
-
-        std::vector<std::uint32_t> seenSsrcs;
-
-        for (const auto& src : c.sources) {
-            if (src.ssrc == 0) {
-                continue;
-            }
-
-            if (std::find(seenSsrcs.begin(), seenSsrcs.end(), src.ssrc) != seenSsrcs.end()) {
-                continue;
-            }
-
-            seenSsrcs.push_back(src.ssrc);
-
-            const std::string cname = src.name.empty() ? std::to_string(src.ssrc) : src.name;
-            const std::string msid = src.name.empty() ? cname : src.name;
-            const std::string trackId = msid + "-track";
-
-            sdp << "a=ssrc:" << src.ssrc << " cname:" << cname << "\r\n";
-            sdp << "a=ssrc:" << src.ssrc << " msid:" << msid << " " << trackId << "\r\n";
-        }
-
-        for (const auto& cand : c.candidates) {
-            appendCandidateSdp(sdp, cand);
-        }
-
-        sdp << "a=end-of-candidates\r\n";
+        appendMediaSectionSdp(sdp, c);
     }
 
     if (transportRef) {
@@ -908,13 +992,18 @@ std::string buildSdpOfferFromJingle(const JingleSession& session) {
         if (!transportRef->iceUfrag.empty()) {
             sdp << "a=ice-ufrag:" << transportRef->iceUfrag << "\r\n";
         }
+
         if (!transportRef->icePwd.empty()) {
             sdp << "a=ice-pwd:" << transportRef->icePwd << "\r\n";
         }
+
         if (!transportRef->fingerprint.empty()) {
-            sdp << "a=fingerprint:"
+            sdp
+                << "a=fingerprint:"
                 << (transportRef->fingerprintHash.empty() ? "sha-256" : transportRef->fingerprintHash)
-                << " " << transportRef->fingerprint << "\r\n";
+                << " "
+                << transportRef->fingerprint
+                << "\r\n";
         }
 
         sdp << "a=setup:actpass\r\n";
@@ -942,8 +1031,12 @@ std::string buildJingleSessionAccept(
 ) {
     std::ostringstream xml;
 
-    xml << "<iq xmlns='jabber:client' type='set' to='" << xmlEscape(session.from)
-        << "' id='" << xmlEscape(id) << "'>";
+    xml
+        << "<iq xmlns='jabber:client' type='set' to='"
+        << xmlEscape(session.from)
+        << "' id='"
+        << xmlEscape(id)
+        << "'>";
 
     xml << "<jingle xmlns='urn:xmpp:jingle:1' action='session-accept'";
 
@@ -951,13 +1044,17 @@ std::string buildJingleSessionAccept(
         xml << " initiator='" << xmlEscape(session.initiator) << "'";
     }
 
-    xml << " responder='" << xmlEscape(responderJid)
-        << "' sid='" << xmlEscape(session.sid) << "'>";
+    xml
+        << " responder='"
+        << xmlEscape(responderJid)
+        << "' sid='"
+        << xmlEscape(session.sid)
+        << "'>";
 
     xml << "<group xmlns='urn:xmpp:jingle:apps:grouping:0' semantics='BUNDLE'>";
 
     for (const auto& c : session.contents) {
-        if (!c.name.empty()) {
+        if (!c.name.empty() && (isAudioContent(c) || isVideoContent(c))) {
             xml << "<content name='" << xmlEscape(c.name) << "'/>";
         }
     }
@@ -966,87 +1063,17 @@ std::string buildJingleSessionAccept(
     xml << "</group>";
 
     for (const auto& c : session.contents) {
-        const bool isAudio = c.name == "audio" || c.media == "audio";
-        const bool isVideo = c.name == "video" || c.media == "video";
-
-        if (!isAudio && !isVideo) {
+        if (!isAudioContent(c) && !isVideoContent(c)) {
             continue;
         }
 
-        xml << "<content creator='initiator' name='" << xmlEscape(c.name) << "' senders='initiator'>";
-
-        xml << "<description xmlns='urn:xmpp:jingle:apps:rtp:1' media='"
-            << xmlEscape(isAudio ? "audio" : "video") << "'>";
-
-        bool wroteCodec = false;
-
-        for (const auto& codec : c.codecs) {
-            const std::string codecNameLower = toLower(codec.name);
-
-            if (isAudio && codecNameLower != "opus") {
-                continue;
-            }
-
-            if (isVideo && codecNameLower != "vp8") {
-                continue;
-            }
-
-            xml << "<payload-type id='" << codec.payloadType
-                << "' name='" << xmlEscape(codec.name)
-                << "' clockrate='" << codec.clockRate << "'";
-
-            if (codec.channels > 0) {
-                xml << " channels='" << codec.channels << "'";
-            }
-
-            xml << ">";
-
-            if (isAudio && codecNameLower == "opus") {
-                xml << "<parameter name='minptime' value='10'/>";
-                xml << "<parameter name='useinbandfec' value='1'/>";
-            }
-
-            if (isVideo) {
-                xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='ccm' subtype='fir'/>";
-                xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack'/>";
-                xml << "<rtcp-fb xmlns='urn:xmpp:jingle:apps:rtp:rtcp-fb:0' type='nack' subtype='pli'/>";
-            }
-
-            xml << "</payload-type>";
-
-            wroteCodec = true;
-            break;
-        }
-
-        if (!wroteCodec) {
-            Logger::warn("JingleSession: no acceptable codec in session-accept for content=", c.name);
-        }
-
-        if (isAudio) {
-            xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' "
-                   "id='1' uri='urn:ietf:params:rtp-hdrext:ssrc-audio-level'/>";
-        } else if (isVideo) {
-            xml << "<rtp-hdrext xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0' "
-                   "id='3' uri='http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time'/>";
-        }
-
-        xml << "<extmap-allow-mixed xmlns='urn:xmpp:jingle:apps:rtp:rtp-hdrext:0'/>";
-        xml << "<rtcp-mux/>";
-        xml << "</description>";
-
-        xml << "<transport xmlns='urn:xmpp:jingle:transports:ice-udp:1' "
-            << "ufrag='" << xmlEscape(localIceUfrag)
-            << "' pwd='" << xmlEscape(localIcePwd) << "'>";
-
-        xml << "<rtcp-mux/>";
-
-        xml << "<fingerprint xmlns='urn:xmpp:jingle:apps:dtls:0' "
-            << "hash='sha-256' required='true' setup='active'>"
-            << xmlEscape(localFingerprint)
-            << "</fingerprint>";
-
-        xml << "</transport>";
-        xml << "</content>";
+        appendMediaAcceptContentXml(
+            xml,
+            c,
+            localIceUfrag,
+            localIcePwd,
+            localFingerprint
+        );
     }
 
     xml << "<content creator='initiator' name='data' senders='both'>";
@@ -1054,16 +1081,20 @@ std::string buildJingleSessionAccept(
     xml << "<rtcp-mux/>";
     xml << "</description>";
 
-    xml << "<transport xmlns='urn:xmpp:jingle:transports:ice-udp:1' "
-        << "ufrag='" << xmlEscape(localIceUfrag)
-        << "' pwd='" << xmlEscape(localIcePwd) << "'>";
+    xml
+        << "<transport xmlns='urn:xmpp:jingle:transports:ice-udp:1' ufrag='"
+        << xmlEscape(localIceUfrag)
+        << "' pwd='"
+        << xmlEscape(localIcePwd)
+        << "'>";
 
-    xml << "<fingerprint xmlns='urn:xmpp:jingle:apps:dtls:0' "
-        << "hash='sha-256' required='true' setup='active'>"
+    xml
+        << "<fingerprint xmlns='urn:xmpp:jingle:apps:dtls:0' hash='sha-256' required='true' setup='active'>"
         << xmlEscape(localFingerprint)
         << "</fingerprint>";
 
-    xml << "<sctpmap xmlns='urn:xmpp:jingle:transports:dtls-sctp:1' "
+    xml
+        << "<sctpmap xmlns='urn:xmpp:jingle:transports:dtls-sctp:1' "
         << "number='5000' protocol='webrtc-datachannel' streams='1024'/>";
 
     xml << "</transport>";

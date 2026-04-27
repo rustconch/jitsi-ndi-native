@@ -33,11 +33,14 @@ struct JingleContent {
     std::string name;
     std::string media;
     std::string senders = "both";
+
     std::string iceUfrag;
     std::string icePwd;
+
     std::string fingerprintHash = "sha-256";
     std::string fingerprint;
     std::string setup = "actpass";
+
     std::vector<JingleCodec> codecs;
     std::vector<JingleCandidate> candidates;
     std::vector<JingleSource> sources;
@@ -48,18 +51,27 @@ struct JingleSession {
     std::string iqId;
     std::string from;
     std::string initiator;
+
     std::string bridgeSessionId;
     std::string region;
+
     std::vector<JingleContent> contents;
 
     const JingleContent* contentByName(const std::string& name) const;
-    const JingleContent* audio() const { return contentByName("audio"); }
-    const JingleContent* video() const { return contentByName("video"); }
+
+    const JingleContent* audio() const {
+        return contentByName("audio");
+    }
+
+    const JingleContent* video() const {
+        return contentByName("video");
+    }
 };
 
 struct LocalIceCandidate {
     std::string mid;
     std::string candidateLine;
+
     std::string foundation;
     std::string component = "1";
     std::string protocol = "udp";
@@ -71,6 +83,7 @@ struct LocalIceCandidate {
 
 std::string xmlEscape(const std::string& s);
 std::string xmlUnescape(std::string s);
+
 std::string attrValue(const std::string& tag, const std::string& attr);
 std::string findFirstTag(const std::string& xml, const std::string& tagName);
 std::vector<std::string> findTags(const std::string& xml, const std::string& tagName);
@@ -80,13 +93,15 @@ bool parseTransportInfoCandidate(const std::string& xml, LocalIceCandidate& out)
 bool parseLocalCandidateLine(const std::string& candidate, LocalIceCandidate& out);
 
 std::string buildSdpOfferFromJingle(const JingleSession& session);
+
 std::string buildJingleSessionAccept(
     const JingleSession& session,
     const std::string& responderJid,
     const std::string& id,
     const std::string& localIceUfrag,
     const std::string& localIcePwd,
-    const std::string& localFingerprint);
+    const std::string& localFingerprint
+);
 
 std::string buildJingleTransportInfo(
     const std::string& to,
@@ -94,4 +109,5 @@ std::string buildJingleTransportInfo(
     const std::string& sid,
     const std::string& localIceUfrag,
     const std::string& localIcePwd,
-    const LocalIceCandidate& cand);
+    const LocalIceCandidate& cand
+);

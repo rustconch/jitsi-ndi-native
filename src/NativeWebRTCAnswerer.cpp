@@ -10,8 +10,10 @@
 #include <memory>
 #include <mutex>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -21,6 +23,23 @@
 #endif
 
 namespace {
+
+bool startsWith(const std::string& value, const std::string& prefix) {
+    return value.size() >= prefix.size()
+        && value.compare(0, prefix.size(), prefix) == 0;
+}
+
+bool containsText(const std::string& value, const std::string& needle) {
+    return value.find(needle) != std::string::npos;
+}
+
+std::string trimTrailingCr(std::string value) {
+    if (!value.empty() && value.back() == '\r') {
+        value.pop_back();
+    }
+
+    return value;
+}
 
 std::string extractSdpAttribute(const std::string& sdp, const std::string& name) {
     const std::regex re("(^|\\r?\\n)a=" + name + R"(:([^\r\n]+))", std::regex::icase);
@@ -42,6 +61,351 @@ std::string extractFingerprint(const std::string& sdp) {
     }
 
     return {};
+}
+
+std::string joinStrings(const std::vector<std::string>& values, const std::string& separator) {
+    std::ostringstream out;
+
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out << separator;
+        }
+
+        out << values[i];
+    }
+
+    return out.str();
+}
+
+bool isFocusBridgeSession(const JingleSession& session) {
+    /*
+        Jitsi may also send direct participant/P2P Jingle offers, for example:
+
+            from='room@conference.meet.jit.si/a861d8f6'
+            bridgeSessionId empty
+            content names '0' and '1'
+
+        Those sessions are NOT the JVB bridge session. If we answer them here,
+        resetSession() kills the real focus/JVB PeerConnection and the participant
+        may leave with unrecoverable_error.
+
+        The JVB/focus session has bridge-session id and comes from /focus,
+        with initiator focus@auth....
+    */
+    if (session.bridgeSessionId.empty()) {
+        return false;
+    }
+
+    if (containsText(session.from, "/focus")) {
+        return true;
+    }
+
+    if (containsText(session.initiator, "focus@")) {
+        return true;
+    }
+
+    return false;
+}
+
+std::string extractPayloadTypeFromAttributeLine(
+    const std::string& line,
+    const std::string& prefix
+) {
+    if (!startsWith(line, prefix)) {
+        return {};
+    }
+
+    std::size_t pos = prefix.size();
+    std::string pt;
+
+    while (pos < line.size()) {
+        const char ch = line[pos];
+
+        if (ch < '0' || ch > '9') {
+            break;
+        }
+
+        pt.push_back(ch);
+        ++pos;
+    }
+
+    return pt;
+}
+
+std::vector<std::string> extractVideoPayloadTypesByCodec(
+    const std::string& sdp,
+    const std::string& codecName
+) {
+    std::vector<std::string> payloadTypes;
+    std::set<std::string> seen;
+
+    std::istringstream input(sdp);
+    std::string line;
+
+    bool inVideo = false;
+
+    while (std::getline(input, line)) {
+        line = trimTrailingCr(line);
+
+        if (startsWith(line, "m=")) {
+            inVideo = startsWith(line, "m=video ");
+            continue;
+        }
+
+        if (!inVideo) {
+            continue;
+        }
+
+        if (!startsWith(line, "a=rtpmap:")) {
+            continue;
+        }
+
+        const std::string pt = extractPayloadTypeFromAttributeLine(line, "a=rtpmap:");
+        if (pt.empty()) {
+            continue;
+        }
+
+        const std::string codecMarker = " " + codecName + "/";
+        if (line.find(codecMarker) == std::string::npos) {
+            continue;
+        }
+
+        if (seen.insert(pt).second) {
+            payloadTypes.push_back(pt);
+        }
+    }
+
+    return payloadTypes;
+}
+
+bool isCodecSpecificSdpAttributeForPayload(
+    const std::string& line,
+    const std::string& prefix,
+    const std::set<std::string>& payloadTypes
+) {
+    const std::string pt = extractPayloadTypeFromAttributeLine(line, prefix);
+
+    if (pt.empty()) {
+        return false;
+    }
+
+    return payloadTypes.find(pt) != payloadTypes.end();
+}
+
+bool isCodecSpecificSdpAttribute(const std::string& line) {
+    return startsWith(line, "a=rtpmap:")
+        || startsWith(line, "a=fmtp:")
+        || startsWith(line, "a=rtcp-fb:");
+}
+
+bool shouldKeepCodecSpecificVideoLine(
+    const std::string& line,
+    const std::set<std::string>& allowedPayloadTypes
+) {
+    if (startsWith(line, "a=rtpmap:")) {
+        return isCodecSpecificSdpAttributeForPayload(line, "a=rtpmap:", allowedPayloadTypes);
+    }
+
+    if (startsWith(line, "a=fmtp:")) {
+        return isCodecSpecificSdpAttributeForPayload(line, "a=fmtp:", allowedPayloadTypes);
+    }
+
+    if (startsWith(line, "a=rtcp-fb:")) {
+        const std::string pt = extractPayloadTypeFromAttributeLine(line, "a=rtcp-fb:");
+
+        /*
+            Keep generic rtcp-fb lines such as a=rtcp-fb:* ...
+            if they ever appear. Jitsi usually sends codec-specific lines.
+        */
+        if (pt.empty()) {
+            return true;
+        }
+
+        return allowedPayloadTypes.find(pt) != allowedPayloadTypes.end();
+    }
+
+    return true;
+}
+
+std::string joinPayloadTypes(const std::vector<std::string>& payloadTypes) {
+    std::ostringstream out;
+
+    for (const auto& pt : payloadTypes) {
+        if (pt.empty()) {
+            continue;
+        }
+
+        if (out.tellp() > 0) {
+            out << " ";
+        }
+
+        out << pt;
+    }
+
+    return out.str();
+}
+
+std::string forceVp8OnlyVideoSdp(const std::string& sdp) {
+    /*
+        The current downstream decoder path is VP8-only.
+
+        Jitsi offer often contains:
+            m=video 9 UDP/TLS/RTP/SAVPF 41 100 107 101
+            a=rtpmap:41 AV1/90000
+            a=rtpmap:100 VP8/90000
+            a=rtpmap:107 H264/90000
+            a=rtpmap:101 VP9/90000
+
+        If AV1/41 remains in the negotiation, JVB may select AV1 and we get:
+            dropping non-VP8 video RTP ... pt=41
+
+        So we keep only VP8 payload types in the video m-line and remove
+        non-VP8 codec attributes from the video media section.
+    */
+    std::vector<std::string> vp8PayloadTypes = extractVideoPayloadTypesByCodec(sdp, "VP8");
+
+    /*
+        Jitsi normally uses PT 100 for VP8. Keep this fallback so the filter
+        still works on the synthetic SDP shape we currently generate.
+    */
+    if (vp8PayloadTypes.empty()) {
+        vp8PayloadTypes.push_back("100");
+    }
+
+    const std::set<std::string> allowedVideoPayloadTypes(
+        vp8PayloadTypes.begin(),
+        vp8PayloadTypes.end()
+    );
+
+    const std::string allowedVideoPayloadList = joinPayloadTypes(vp8PayloadTypes);
+
+    std::istringstream input(sdp);
+    std::ostringstream output;
+
+    std::string line;
+    bool inVideo = false;
+
+    while (std::getline(input, line)) {
+        line = trimTrailingCr(line);
+
+        if (startsWith(line, "m=")) {
+            inVideo = startsWith(line, "m=video ");
+
+            if (inVideo) {
+                std::istringstream parts(line);
+
+                std::string media;
+                std::string port;
+                std::string proto;
+
+                parts >> media >> port >> proto;
+
+                if (!media.empty()
+                    && !port.empty()
+                    && !proto.empty()
+                    && !allowedVideoPayloadList.empty()) {
+                    output
+                        << media
+                        << " "
+                        << port
+                        << " "
+                        << proto
+                        << " "
+                        << allowedVideoPayloadList
+                        << "\r\n";
+                    continue;
+                }
+            }
+
+            output << line << "\r\n";
+            continue;
+        }
+
+        if (inVideo) {
+            if (isCodecSpecificSdpAttribute(line)
+                && !shouldKeepCodecSpecificVideoLine(line, allowedVideoPayloadTypes)) {
+                continue;
+            }
+
+            /*
+                These extensions are AV1/SVC-oriented and are not needed for
+                the VP8-only path. Keeping them is usually harmless, but removing
+                them makes the negotiated video section less ambiguous.
+            */
+            if (line.find("aomediacodec.github.io/av1-rtp-spec") != std::string::npos
+                || line.find("video-layers-allocation00") != std::string::npos) {
+                continue;
+            }
+        }
+
+        output << line << "\r\n";
+    }
+
+    return output.str();
+}
+
+/*
+    buildSdpOfferFromJingle() writes source names into synthetic SDP:
+
+        a=ssrc:3528528624 cname:866501ec-v0
+        a=ssrc:1811570445 cname:e33a93f4-v0
+        a=ssrc:702947349 cname:jvb-v0
+
+    We extract real endpoint video source names from the video media section
+    and ask JVB to forward those source names via ReceiverVideoConstraints.
+*/
+std::vector<std::string> extractVideoSourceNamesFromSdp(const std::string& sdp) {
+    std::vector<std::string> sources;
+    std::set<std::string> seen;
+
+    std::istringstream input(sdp);
+    std::string line;
+
+    bool inVideo = false;
+
+    while (std::getline(input, line)) {
+        line = trimTrailingCr(line);
+
+        if (startsWith(line, "m=")) {
+            inVideo = startsWith(line, "m=video ");
+            continue;
+        }
+
+        if (!inVideo) {
+            continue;
+        }
+
+        if (!startsWith(line, "a=ssrc:")) {
+            continue;
+        }
+
+        const std::string marker = " cname:";
+        const auto markerPos = line.find(marker);
+
+        if (markerPos == std::string::npos) {
+            continue;
+        }
+
+        std::string name = line.substr(markerPos + marker.size());
+
+        if (name.empty()) {
+            continue;
+        }
+
+        if (startsWith(name, "jvb")) {
+            continue;
+        }
+
+        if (name.find("-v") == std::string::npos) {
+            continue;
+        }
+
+        if (seen.insert(name).second) {
+            sources.push_back(name);
+        }
+    }
+
+    return sources;
 }
 
 #if JNN_WITH_NATIVE_WEBRTC
@@ -68,7 +432,7 @@ void sendBridgeMessage(
 std::string escapeJsonString(const std::string& value) {
     std::ostringstream out;
 
-    for (const char ch : value) {
+    for (char ch : value) {
         switch (ch) {
         case '\\':
             out << "\\\\";
@@ -118,7 +482,6 @@ std::vector<std::string> extractJsonStringArray(
     }
 
     const std::string body = arrayMatch[1].str();
-
     const std::regex stringRe("\\\"([^\\\"]+)\\\"");
 
     for (auto it = std::sregex_iterator(body.begin(), body.end(), stringRe);
@@ -132,6 +495,7 @@ std::vector<std::string> extractJsonStringArray(
 
 std::string jsonStringArray(const std::vector<std::string>& values) {
     std::ostringstream out;
+
     out << "[";
 
     for (std::size_t i = 0; i < values.size(); ++i) {
@@ -143,58 +507,106 @@ std::string jsonStringArray(const std::vector<std::string>& values) {
     }
 
     out << "]";
+
     return out.str();
 }
 
 std::string makeReceiverVideoConstraintsMessage(
-    const std::vector<std::string>& sources,
+    const std::vector<std::string>& sourceNames,
     int maxHeight
 ) {
+    /*
+        Current Jitsi Videobridge source-name mode:
+        - selectedSources / onStageSources contain source names, for example 866501ec-v0.
+        - constraints is keyed by source name.
+        - defaultConstraints applies to sources not explicitly listed.
+        - lastN = -1 means unlimited.
+    */
     std::ostringstream out;
 
-    out
-        << "{"
-        << "\"colibriClass\":\"ReceiverVideoConstraints\","
-        << "\"lastN\":20,"
-        << "\"selectedSources\":" << jsonStringArray(sources) << ","
-        << "\"onStageSources\":" << jsonStringArray(sources) << ","
-        << "\"defaultConstraints\":{\"maxHeight\":0,\"maxFrameRate\":30},"
-        << "\"constraints\":{";
+    out << "{";
+    out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
+    out << "\"lastN\":-1,";
+    out << "\"assumedBandwidthBps\":20000000,";
+    out << "\"selectedSources\":" << jsonStringArray(sourceNames) << ",";
+    out << "\"onStageSources\":" << jsonStringArray(sourceNames) << ",";
+    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << "},";
+    out << "\"constraints\":{";
 
-    for (std::size_t i = 0; i < sources.size(); ++i) {
+    for (std::size_t i = 0; i < sourceNames.size(); ++i) {
         if (i > 0) {
             out << ",";
         }
 
         out
             << "\""
-            << escapeJsonString(sources[i])
+            << escapeJsonString(sourceNames[i])
             << "\":{\"maxHeight\":"
             << maxHeight
-            << ",\"maxFrameRate\":30}";
+            << "}";
     }
 
-    out << "}}";
+    out << "}";
+    out << "}";
 
     return out.str();
 }
 
-void sendReceiverVideoConstraintsForSources(
+void sendReceiverVideoConstraints(
     const std::shared_ptr<rtc::DataChannel>& channel,
-    const std::vector<std::string>& sources,
+    const std::vector<std::string>& sourceNames,
     const std::string& reason
 ) {
-    if (!channel || sources.empty()) {
+    sendBridgeMessage(
+        channel,
+        makeReceiverVideoConstraintsMessage(sourceNames, 720),
+        "ReceiverVideoConstraints/" + reason
+    );
+}
+
+void scheduleRepeatedVideoConstraintRefresh(
+    const std::shared_ptr<rtc::DataChannel>& channel,
+    const std::shared_ptr<std::mutex>& sourcesMutex,
+    const std::shared_ptr<std::vector<std::string>>& latestSources,
+    const std::vector<std::string> fallbackSources
+) {
+    if (!channel || !sourcesMutex || !latestSources) {
         return;
     }
 
-    const std::string msg = makeReceiverVideoConstraintsMessage(sources, 720);
+    std::thread([channel, sourcesMutex, latestSources, fallbackSources]() {
+        const int delaysMs[] = {
+            250,
+            750,
+            1500,
+            3000,
+            6000,
+            10000,
+            15000,
+            20000
+        };
 
-    sendBridgeMessage(
-        channel,
-        msg,
-        "ReceiverVideoConstraints/" + reason
-    );
+        for (const int delayMs : delaysMs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+
+            std::vector<std::string> copy;
+
+            {
+                std::lock_guard<std::mutex> lock(*sourcesMutex);
+                copy = *latestSources;
+            }
+
+            if (copy.empty()) {
+                copy = fallbackSources;
+            }
+
+            sendReceiverVideoConstraints(
+                channel,
+                copy,
+                "refresh"
+            );
+        }
+    }).detach();
 }
 
 #endif
@@ -205,6 +617,22 @@ struct NativeWebRTCAnswerer::Impl {
 #if JNN_WITH_NATIVE_WEBRTC
     std::shared_ptr<rtc::PeerConnection> pc;
     std::shared_ptr<rtc::DataChannel> bridgeChannel;
+
+    /*
+        Important:
+        Keep incoming remote tracks alive. If we only attach callbacks inside
+        pc->onTrack() and do not store the shared_ptr, the track may be destroyed
+        after the callback scope ends, and no RTP callback will ever fire.
+    */
+    std::shared_ptr<rtc::Track> remoteAudioTrack;
+    std::shared_ptr<rtc::Track> remoteVideoTrack;
+
+    /*
+        Keep RTCP receiving sessions alive too. They are attached to tracks,
+        but storing them makes lifetime explicit and easier to debug.
+    */
+    std::shared_ptr<rtc::RtcpReceivingSession> remoteAudioRtcpSession;
+    std::shared_ptr<rtc::RtcpReceivingSession> remoteVideoRtcpSession;
 #endif
 
     std::mutex mutex;
@@ -215,7 +643,8 @@ struct NativeWebRTCAnswerer::Impl {
 };
 
 NativeWebRTCAnswerer::NativeWebRTCAnswerer()
-    : impl_(std::make_unique<Impl>()) {}
+    : impl_(std::make_unique<Impl>()) {
+}
 
 NativeWebRTCAnswerer::~NativeWebRTCAnswerer() {
     resetSession();
@@ -245,6 +674,10 @@ void NativeWebRTCAnswerer::resetSession() {
         oldPc = std::move(impl_->pc);
 
         impl_->bridgeChannel.reset();
+        impl_->remoteAudioTrack.reset();
+        impl_->remoteVideoTrack.reset();
+        impl_->remoteAudioRtcpSession.reset();
+        impl_->remoteVideoRtcpSession.reset();
         impl_->pc.reset();
 
         impl_->localDescriptionReady = false;
@@ -281,6 +714,21 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     Logger::warn("NativeWebRTCAnswerer: built without libdatachannel; no native answer created");
     return false;
 #else
+    if (!isFocusBridgeSession(session)) {
+        Logger::warn(
+            "NativeWebRTCAnswerer: ignoring non-focus/non-JVB Jingle session. from=",
+            session.from,
+            " initiator=",
+            session.initiator,
+            " bridgeSessionId=",
+            session.bridgeSessionId,
+            " sid=",
+            session.sid
+        );
+
+        return false;
+    }
+
     resetSession();
 
     audioPackets_ = 0;
@@ -289,8 +737,28 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     videoBytes_ = 0;
 
     Logger::info("NativeWebRTCAnswerer: creating libdatachannel PeerConnection");
+    Logger::warn("NativeWebRTCAnswerer: using remote onTrack raw RTP path with RTCP receiving session");
+
+    const std::string rawOfferSdp = buildSdpOfferFromJingle(session);
+    const std::string offerSdp = forceVp8OnlyVideoSdp(rawOfferSdp);
+
+    if (offerSdp != rawOfferSdp) {
+        Logger::warn("NativeWebRTCAnswerer: VP8-only SDP filter applied to remote offer");
+    }
+
+    const std::vector<std::string> initialVideoSources = extractVideoSourceNamesFromSdp(rawOfferSdp);
+
+    if (initialVideoSources.empty()) {
+        Logger::warn("NativeWebRTCAnswerer: no initial video sources extracted from SDP offer");
+    } else {
+        Logger::info(
+            "NativeWebRTCAnswerer: initial video sources extracted from SDP offer: ",
+            joinStrings(initialVideoSources, ",")
+        );
+    }
 
     rtc::Configuration config;
+    config.forceMediaTransport = true;
 
     for (const auto& server : iceServers_) {
         if (server.uri.empty()) {
@@ -308,6 +776,9 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         impl_->pc = pc;
     }
 
+    const auto latestForwardedSources = std::make_shared<std::vector<std::string>>();
+    const auto latestForwardedSourcesMutex = std::make_shared<std::mutex>();
+
     pc->onStateChange([](rtc::PeerConnection::State state) {
         Logger::info("NativeWebRTCAnswerer: PeerConnection state=", static_cast<int>(state));
     });
@@ -316,11 +787,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         Logger::info("NativeWebRTCAnswerer: gathering state=", static_cast<int>(state));
     });
 
-    /*
-        Jitsi Videobridge needs the bridge datachannel. ICE/DTLS may connect without it,
-        but RTP will not be forwarded until the client sends ClientHello/subscriptions/
-        video constraints over the channel.
-    */
     std::shared_ptr<rtc::DataChannel> bridgeChannel;
 
     try {
@@ -331,7 +797,12 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             impl_->bridgeChannel = bridgeChannel;
         }
 
-        bridgeChannel->onOpen([bridgeChannel]() {
+        bridgeChannel->onOpen([
+            bridgeChannel,
+            latestForwardedSources,
+            latestForwardedSourcesMutex,
+            initialVideoSources
+        ]() {
             Logger::info("NativeWebRTCAnswerer: bridge datachannel opened");
 
             sendBridgeMessage(
@@ -346,20 +817,17 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                 "ReceiverAudioSubscription"
             );
 
-            /*
-                Initial broad request. In real browsers, Jitsi later refines constraints
-                after forwarded sources / selected sources are known. We do the same in
-                onMessage() after ForwardedSources arrives.
-            */
-            sendBridgeMessage(
+            sendReceiverVideoConstraints(
                 bridgeChannel,
-                "{\"colibriClass\":\"ReceiverVideoConstraints\","
-                "\"lastN\":20,"
-                "\"defaultConstraints\":{\"maxHeight\":720,\"maxFrameRate\":30},"
-                "\"constraints\":{},"
-                "\"selectedSources\":[],"
-                "\"onStageSources\":[]}",
-                "ReceiverVideoConstraints/initial"
+                initialVideoSources,
+                "open-sdp-sources"
+            );
+
+            scheduleRepeatedVideoConstraintRefresh(
+                bridgeChannel,
+                latestForwardedSourcesMutex,
+                latestForwardedSources,
+                initialVideoSources
             );
         });
 
@@ -371,7 +839,12 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error);
         });
 
-        bridgeChannel->onMessage([bridgeChannel](rtc::message_variant message) {
+        bridgeChannel->onMessage([
+            bridgeChannel,
+            latestForwardedSources,
+            latestForwardedSourcesMutex,
+            initialVideoSources
+        ](rtc::message_variant message) {
             std::string text;
 
             if (std::holds_alternative<std::string>(message)) {
@@ -396,15 +869,36 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             }
 
             if (text.find("\"colibriClass\":\"ServerHello\"") != std::string::npos) {
-                Logger::info("NativeWebRTCAnswerer: ServerHello received; waiting for ForwardedSources");
+                Logger::info("NativeWebRTCAnswerer: ServerHello received; sending SDP-source constraints");
+
+                sendReceiverVideoConstraints(
+                    bridgeChannel,
+                    initialVideoSources,
+                    "server-hello-sdp-sources"
+                );
+
                 return;
             }
 
             if (text.find("\"colibriClass\":\"ForwardedSources\"") != std::string::npos) {
                 const auto sources = extractJsonStringArray(text, "forwardedSources");
 
+                {
+                    std::lock_guard<std::mutex> lock(*latestForwardedSourcesMutex);
+                    *latestForwardedSources = sources;
+                }
+
                 if (sources.empty()) {
-                    Logger::info("NativeWebRTCAnswerer: ForwardedSources is empty");
+                    Logger::info(
+                        "NativeWebRTCAnswerer: ForwardedSources is empty; falling back to SDP-source constraints"
+                    );
+
+                    sendReceiverVideoConstraints(
+                        bridgeChannel,
+                        initialVideoSources,
+                        "forwarded-empty-fallback-sdp-sources"
+                    );
+
                     return;
                 }
 
@@ -414,7 +908,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                     "; sending explicit source constraints"
                 );
 
-                sendReceiverVideoConstraintsForSources(
+                sendReceiverVideoConstraints(
                     bridgeChannel,
                     sources,
                     "forwarded-sources"
@@ -461,11 +955,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
 
         parsed.mid = candidate.mid();
 
-        /*
-            meet.jit.si / Jicofo often rejects relay candidates when we send them
-            as Jingle transport-info. We still allow libdatachannel to use configured
-            ICE servers internally, but we do not export relay candidates through XMPP.
-        */
         if (parsed.type == "relay") {
             Logger::info(
                 "NativeWebRTCAnswerer: skipping local relay candidate for Jingle transport-info: ",
@@ -480,6 +969,11 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     });
 
     pc->onTrack([this](std::shared_ptr<rtc::Track> track) {
+        if (!track) {
+            Logger::warn("NativeWebRTCAnswerer: remote onTrack fired with null track");
+            return;
+        }
+
         std::string mid;
 
         try {
@@ -488,39 +982,64 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             mid = "unknown";
         }
 
-        Logger::info("NativeWebRTCAnswerer: remote track received, mid=", mid);
+        Logger::info("NativeWebRTCAnswerer: remote track received and retained, mid=", mid);
 
-        /*
-            This helps libdatachannel maintain receiving-side RTCP state and send
-            receiver reports / feedback. It should not decode RTP, but it makes the
-            receiving track closer to a real WebRTC endpoint.
-        */
+        std::shared_ptr<rtc::RtcpReceivingSession> rtcpSession;
+
         try {
-            track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
-            Logger::info("NativeWebRTCAnswerer: RTCP receiving session attached, mid=", mid);
+            rtcpSession = std::make_shared<rtc::RtcpReceivingSession>();
+            track->setMediaHandler(rtcpSession);
+
+            Logger::info(
+                "NativeWebRTCAnswerer: RTCP receiving session attached to remote track mid=",
+                mid
+            );
         } catch (const std::exception& e) {
             Logger::warn(
-                "NativeWebRTCAnswerer: could not attach RTCP receiving session, mid=",
+                "NativeWebRTCAnswerer: failed to attach RTCP receiving session mid=",
                 mid,
                 ": ",
                 e.what()
             );
         } catch (...) {
             Logger::warn(
-                "NativeWebRTCAnswerer: could not attach RTCP receiving session, mid=",
+                "NativeWebRTCAnswerer: failed to attach RTCP receiving session mid=",
                 mid,
                 ": unknown error"
             );
         }
 
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+
+            if (mid == "audio") {
+                impl_->remoteAudioTrack = track;
+                impl_->remoteAudioRtcpSession = rtcpSession;
+                Logger::info("NativeWebRTCAnswerer: stored remote audio track");
+            } else if (mid == "video") {
+                impl_->remoteVideoTrack = track;
+                impl_->remoteVideoRtcpSession = rtcpSession;
+                Logger::info("NativeWebRTCAnswerer: stored remote video track");
+            } else {
+                Logger::warn("NativeWebRTCAnswerer: remote track has unknown mid=", mid);
+            }
+        }
+
         track->onOpen([mid]() {
-            Logger::info("NativeWebRTCAnswerer: track opened, mid=", mid);
+            Logger::info("NativeWebRTCAnswerer: remote track opened, mid=", mid);
         });
 
         track->onClosed([mid]() {
-            Logger::info("NativeWebRTCAnswerer: track closed, mid=", mid);
+            Logger::warn("NativeWebRTCAnswerer: remote track closed, mid=", mid);
         });
 
+        /*
+            Keep this as raw RTP for now.
+
+            Do not attach VP8/H264/AV1 depacketizers here yet, because the next
+            milestone is proving that RTP arrives at this callback. Decoding and
+            NDI frame output should be layered after this counter starts moving.
+        */
         track->onMessage([this, mid](rtc::message_variant message) {
             if (!std::holds_alternative<rtc::binary>(message)) {
                 return;
@@ -539,26 +1058,33 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                 const auto n = ++audioPackets_;
                 audioBytes_ += size;
 
-                if ((n % 500) == 0 || n == 1) {
+                if ((n % 200) == 0 || n == 1) {
                     Logger::info(
-                        "NativeWebRTCAnswerer: RTP audio packets=",
+                        "NativeWebRTCAnswerer: RAW RTP audio packets=",
                         n,
                         " bytes=",
                         audioBytes_.load()
                     );
                 }
-            } else {
+            } else if (mid == "video") {
                 const auto n = ++videoPackets_;
                 videoBytes_ += size;
 
-                if ((n % 300) == 0 || n == 1) {
+                if ((n % 100) == 0 || n == 1) {
                     Logger::info(
-                        "NativeWebRTCAnswerer: RTP video packets=",
+                        "NativeWebRTCAnswerer: RAW RTP video packets=",
                         n,
                         " bytes=",
                         videoBytes_.load()
                     );
                 }
+            } else {
+                Logger::info(
+                    "NativeWebRTCAnswerer: RAW RTP/data on unknown track mid=",
+                    mid,
+                    " bytes=",
+                    size
+                );
             }
 
             if (onMediaPacket_) {
@@ -567,9 +1093,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
     });
 
-    const std::string offerSdp = buildSdpOfferFromJingle(session);
-
-    Logger::info("NativeWebRTCAnswerer: setting remote Jitsi SDP-like offer");
+    Logger::info("NativeWebRTCAnswerer: setting remote Jitsi SDP-like VP8-only offer");
 
     try {
         pc->setRemoteDescription(rtc::Description(offerSdp, "offer"));
@@ -591,7 +1115,12 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         return false;
     }
 
-    outAnswer.sdp = impl_->localSdp;
+    outAnswer.sdp = forceVp8OnlyVideoSdp(impl_->localSdp);
+
+    if (outAnswer.sdp != impl_->localSdp) {
+        Logger::warn("NativeWebRTCAnswerer: VP8-only SDP filter applied to local answer");
+    }
+
     outAnswer.iceUfrag = extractSdpAttribute(outAnswer.sdp, "ice-ufrag");
     outAnswer.icePwd = extractSdpAttribute(outAnswer.sdp, "ice-pwd");
     outAnswer.fingerprint = extractFingerprint(outAnswer.sdp);
