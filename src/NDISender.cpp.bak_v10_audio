@@ -26,7 +26,7 @@ bool NDISender::start() {
     NDIlib_send_create_t createDesc{};
     createDesc.p_ndi_name = sourceName_.c_str();
     createDesc.clock_video = false;
-    createDesc.clock_audio = true; // PATCH_V10_AUDIO_PLANAR_CLOCK: let NDI pace audio; Opus/RTP decode is already 20 ms frames
+    createDesc.clock_audio = false; // repo-patch-v8: RTP arrival already clocks audio; do not block the RTP callback thread
 
     ndiSend_ = NDIlib_send_create(&createDesc);
     if (!ndiSend_) {

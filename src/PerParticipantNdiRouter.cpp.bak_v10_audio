@@ -179,7 +179,7 @@ void PerParticipantNdiRouter::handleRtp(
                     p.ndi->sendVideoFrame(decoded, 30, 1);
                 }
             }
-            if ((p.videoPackets % 300) == 0) // PATCH_V10_AUDIO_PLANAR_CLOCK: throttle AV1 frame logs; do not spam console every frame {
+            if ((p.videoPackets % 300) == 0 || !frames.empty()) {
                 Logger::info(
                     "PerParticipantNdiRouter: AV1 video packets endpoint=",
                     p.endpointId,

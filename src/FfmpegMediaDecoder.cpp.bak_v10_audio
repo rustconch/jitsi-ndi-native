@@ -220,8 +220,8 @@ struct FfmpegOpusDecoder::Impl {
         int rc = swr_alloc_set_opts2(
             &swr,
             &outLayout,
-            AV_SAMPLE_FMT_FLTP,
-            48000, // PATCH_V10_AUDIO_PLANAR_CLOCK: planar float for NDI
+            AV_SAMPLE_FMT_FLT,
+            48000,
             &in->ch_layout,
             static_cast<AVSampleFormat>(in->format),
             in->sample_rate > 0 ? in->sample_rate : 48000,
@@ -286,19 +286,7 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
         if (converted > 0) {
             f.samples = converted;
             f.planar.resize(static_cast<std::size_t>(f.channels) * converted);
-            static std::uint64_t decodedAudioFrames = 0;
-                ++decodedAudioFrames;
-                // PATCH_V10_AUDIO_PLANAR_CLOCK_DECODE_LOG
-                if (decodedAudioFrames == 1 || (decodedAudioFrames % 500) == 0) {
-                    Logger::info(
-                        "FfmpegOpusDecoder: decoded audio frame samples=",
-                        f.samples,
-                        " channels=",
-                        f.channels,
-                        " format=fltp"
-                    );
-                }
-                out.push_back(std::move(f));
+            out.push_back(std::move(f));
         }
         av_frame_unref(impl_->frame);
     }
