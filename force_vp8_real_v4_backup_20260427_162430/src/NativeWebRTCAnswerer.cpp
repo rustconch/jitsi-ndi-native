@@ -23,11 +23,10 @@
 #include "RtpSourceRegistry.h"
 
 
-
-
-
-// JNN_FORCE_VP8_REAL_V4_BEGIN
-static std::vector<std::string> jnnSplitSdpLines(const std::string& inputSdp) {
+// JNN_FORCE_VP8_HOTFIX_BEGIN
+// Temporary compatibility fix: do not negotiate AV1 until the native AV1 RTP
+// depacketizer handles Jitsi AV1 aggregation/OBU framing correctly.
+static std::string jnnForceSdpVideoVp8Only(const std::string& inputSdp) {
     std::vector<std::string> lines;
     std::string cur;
     for (char ch : inputSdp) {
@@ -43,37 +42,26 @@ static std::vector<std::string> jnnSplitSdpLines(const std::string& inputSdp) {
         if (!cur.empty() && cur.back() == '\r') cur.pop_back();
         lines.push_back(cur);
     }
-    return lines;
-}
-
-static bool jnnSdpLinePayloadTypeIs(const std::string& line, const std::string& pt) {
-    const size_t colon = line.find(':');
-    if (colon == std::string::npos) return false;
-    const size_t start = colon + 1;
-    const size_t end = line.find_first_of(" \t", start);
-    const std::string found = line.substr(start, end == std::string::npos ? std::string::npos : end - start);
-    return found == pt;
-}
-
-static std::string jnnForceSdpVideoVp8Only(const std::string& inputSdp) {
-    const auto lines = jnnSplitSdpLines(inputSdp);
 
     std::string vp8Pt;
     bool inVideo = false;
     for (const auto& line : lines) {
-        if (line.rfind("m=", 0) == 0) inVideo = (line.rfind("m=video", 0) == 0);
+        if (line.rfind("m=", 0) == 0) {
+            inVideo = (line.rfind("m=video", 0) == 0);
+        }
         if (!inVideo) continue;
         if (line.rfind("a=rtpmap:", 0) == 0 && line.find(" VP8/90000") != std::string::npos) {
             const size_t start = std::string("a=rtpmap:").size();
-            const size_t space = line.find_first_of(" \t", start);
+            const size_t space = line.find(' ', start);
             if (space != std::string::npos && space > start) {
                 vp8Pt = line.substr(start, space - start);
-                break;
             }
         }
     }
 
-    if (vp8Pt.empty()) return inputSdp;
+    if (vp8Pt.empty()) {
+        return inputSdp;
+    }
 
     std::string out;
     inVideo = false;
@@ -81,6 +69,7 @@ static std::string jnnForceSdpVideoVp8Only(const std::string& inputSdp) {
         if (line.rfind("m=", 0) == 0) {
             inVideo = (line.rfind("m=video", 0) == 0);
             if (inVideo) {
+                // m=video <port> <proto> <payload-types...>
                 size_t p1 = line.find(' ');
                 size_t p2 = (p1 == std::string::npos) ? std::string::npos : line.find(' ', p1 + 1);
                 size_t p3 = (p2 == std::string::npos) ? std::string::npos : line.find(' ', p2 + 1);
@@ -93,22 +82,41 @@ static std::string jnnForceSdpVideoVp8Only(const std::string& inputSdp) {
 
         if (inVideo) {
             bool drop = false;
-            if (line.rfind("a=rtpmap:", 0) == 0 && !jnnSdpLinePayloadTypeIs(line, vp8Pt)) drop = true;
-            if (!drop && line.rfind("a=fmtp:", 0) == 0 && !jnnSdpLinePayloadTypeIs(line, vp8Pt)) drop = true;
-            if (!drop && line.rfind("a=rtcp-fb:", 0) == 0 && !jnnSdpLinePayloadTypeIs(line, vp8Pt)) drop = true;
+            const char* dropCodecs[] = {" AV1/90000", " H264/90000", " VP9/90000"};
+            for (const char* codec : dropCodecs) {
+                if (line.rfind("a=rtpmap:", 0) == 0 && line.find(codec) != std::string::npos) {
+                    drop = true;
+                }
+            }
+
+            if (!drop && (line.rfind("a=fmtp:", 0) == 0 || line.rfind("a=rtcp-fb:", 0) == 0)) {
+                const size_t colon = line.find(':');
+                const size_t space = line.find(' ', colon == std::string::npos ? 0 : colon + 1);
+                const std::string pt = (colon != std::string::npos)
+                    ? line.substr(colon + 1, (space == std::string::npos ? line.size() : space) - colon - 1)
+                    : std::string();
+                if (!pt.empty() && pt != vp8Pt) {
+                    drop = true;
+                }
+            }
+
             if (!drop && line.rfind("a=extmap:", 0) == 0) {
                 if (line.find("dependency-descriptor") != std::string::npos ||
                     line.find("video-layers-allocation") != std::string::npos) {
                     drop = true;
                 }
             }
-            if (drop) continue;
+
+            if (drop) {
+                continue;
+            }
         }
         out += line + "\r\n";
     }
     return out;
 }
-// JNN_FORCE_VP8_REAL_V4_END
+// JNN_FORCE_VP8_HOTFIX_END
+
 
 #endif
 
@@ -1052,7 +1060,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     }
 
     pc->onLocalDescription([this](rtc::Description desc) {
-        std::string sdp = std::string(desc);
+        const std::string sdp = std::string(desc);
         const std::string type = desc.typeString();
 
         Logger::info("NativeWebRTCAnswerer: local SDP description generated, type=", type);
@@ -1221,7 +1229,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
     });
 
-    sdp = jnnForceSdpVideoVp8Only(sdp); // JNN_FORCE_REMOTE_OFFER_VP8_REAL_V4_APPLIED
     Logger::info("NativeWebRTCAnswerer: setting remote Jitsi SDP-like offer");
 
     try {

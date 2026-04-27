@@ -12,56 +12,58 @@
 
 
 
-
-
-// JNN_FORCE_JINGLE_VP8_REAL_V4_BEGIN
-static std::string jnnEraseXmlElementAround(std::string xml, size_t pos, const std::string& elementName) {
-    const std::string open = "<" + elementName;
-    const size_t start = xml.rfind(open, pos);
-    if (start == std::string::npos) return xml;
-
-    const std::string close = "</" + elementName + ">";
-    size_t end = xml.find(close, pos);
-    if (end != std::string::npos) {
-        end += close.size();
-    } else {
-        end = xml.find("/>", pos);
-        if (end == std::string::npos) return xml;
-        end += 2;
-    }
-    xml.erase(start, end - start);
-    return xml;
-}
-
-static std::string jnnErasePayloadTypeByCodecNameV4(std::string xml, const std::string& codecName) {
+// JNN_FORCE_JINGLE_VP8_HOTFIX_BEGIN
+// Temporary compatibility fix: do not advertise AV1/H264/VP9 in outgoing
+// Jingle session-accept. This avoids libdav1d errors from malformed/unsupported
+// AV1 RTP reassembly while we stabilize the native RTP path.
+static std::string jnnErasePayloadTypeByCodecName(std::string xml, const std::string& codecName) {
     for (;;) {
         size_t pos = xml.find("name='" + codecName + "'");
         if (pos == std::string::npos) pos = xml.find("name=\"" + codecName + "\"");
         if (pos == std::string::npos) break;
-        xml = jnnEraseXmlElementAround(std::move(xml), pos, "payload-type");
+
+        const size_t start = xml.rfind("<payload-type", pos);
+        if (start == std::string::npos) break;
+
+        size_t end = xml.find("</payload-type>", pos);
+        if (end != std::string::npos) {
+            end += std::string("</payload-type>").size();
+        } else {
+            end = xml.find("/>", pos);
+            if (end == std::string::npos) break;
+            end += 2;
+        }
+        xml.erase(start, end - start);
     }
     return xml;
 }
 
-static std::string jnnEraseRtpHeaderExtensionByTextV4(std::string xml, const std::string& needle) {
+static std::string jnnEraseHeaderExtensionByText(std::string xml, const std::string& needle) {
     for (;;) {
         size_t pos = xml.find(needle);
         if (pos == std::string::npos) break;
-        xml = jnnEraseXmlElementAround(std::move(xml), pos, "rtp-hdrext");
+        const size_t start = xml.rfind("<rtp-hdrext", pos);
+        if (start == std::string::npos) break;
+        size_t end = xml.find("/>", pos);
+        if (end == std::string::npos) break;
+        end += 2;
+        xml.erase(start, end - start);
     }
     return xml;
 }
 
-static std::string jnnForceJingleSessionAcceptVp8OnlyV4(std::string xml) {
-    if (xml.find("session-accept") == std::string::npos) return xml;
-    xml = jnnErasePayloadTypeByCodecNameV4(std::move(xml), "AV1");
-    xml = jnnErasePayloadTypeByCodecNameV4(std::move(xml), "H264");
-    xml = jnnErasePayloadTypeByCodecNameV4(std::move(xml), "VP9");
-    xml = jnnEraseRtpHeaderExtensionByTextV4(std::move(xml), "dependency-descriptor");
-    xml = jnnEraseRtpHeaderExtensionByTextV4(std::move(xml), "video-layers-allocation");
+static std::string jnnForceJingleSessionAcceptVp8Only(std::string xml) {
+    if (xml.find("session-accept") == std::string::npos) {
+        return xml;
+    }
+    xml = jnnErasePayloadTypeByCodecName(std::move(xml), "AV1");
+    xml = jnnErasePayloadTypeByCodecName(std::move(xml), "H264");
+    xml = jnnErasePayloadTypeByCodecName(std::move(xml), "VP9");
+    xml = jnnEraseHeaderExtensionByText(std::move(xml), "dependency-descriptor");
+    xml = jnnEraseHeaderExtensionByText(std::move(xml), "video-layers-allocation");
     return xml;
 }
-// JNN_FORCE_JINGLE_VP8_REAL_V4_END
+// JNN_FORCE_JINGLE_VP8_HOTFIX_END
 
 namespace {
 
@@ -616,7 +618,7 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
 
     const std::string acceptId = makeIqId("jitsi_ndi_session_accept");
 
-    std::string acceptXml = buildJingleSessionAccept(
+    const std::string acceptXml = buildJingleSessionAccept(
         session,
         boundJid_,
         acceptId,
@@ -625,7 +627,6 @@ void JitsiSignaling::handleJingleInitiate(const std::string& xml) {
         answer.fingerprint
     );
 
-    acceptXml = jnnForceJingleSessionAcceptVp8OnlyV4(acceptXml); // JNN_FORCE_JINGLE_VP8_REAL_V4_APPLIED
     Logger::info("JingleSession: session-accept XML:\n", acceptXml);
 
     sendRaw(acceptXml);
