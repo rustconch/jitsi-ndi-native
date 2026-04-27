@@ -1,0 +1,233 @@
+#include "PerParticipantNdiRouter.h"
+
+#include "Logger.h"
+
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include "RtpSourceRegistry.h"
+
+namespace {
+
+constexpr std::uint8_t kVp8PayloadType = 100;
+
+std::uint8_t readRtpPayloadType(const std::uint8_t* data, std::size_t size) {
+    if (!data || size < 2) {
+        return 0;
+    }
+
+    return static_cast<std::uint8_t>(data[1] & 0x7F);
+}
+
+std::unordered_map<std::string, std::uint64_t> g_droppedNonVp8VideoPackets;
+
+} // namespace
+
+PerParticipantNdiRouter::PerParticipantNdiRouter(std::string ndiBaseName)
+    : ndiBaseName_(std::move(ndiBaseName)) {
+    if (ndiBaseName_.empty()) {
+        ndiBaseName_ = "JitsiNDI";
+    }
+}
+
+PerParticipantNdiRouter::~PerParticipantNdiRouter() = default;
+
+void PerParticipantNdiRouter::updateSourcesFromJingleXml(const std::string& xml) {
+    if (xml.find("<source") == std::string::npos) {
+        return;
+    }
+
+    sourceMap_.updateFromJingleXml(xml);
+}
+
+void PerParticipantNdiRouter::removeSourcesFromJingleXml(const std::string& xml) {
+    if (xml.find("<source") == std::string::npos) {
+        return;
+    }
+
+    sourceMap_.removeFromJingleXml(xml);
+}
+
+std::string PerParticipantNdiRouter::sourceNameFor(const JitsiSourceInfo& source) const {
+    const std::string safe = JitsiSourceMap::sanitizeForNdiName(
+        source.displayName.empty() ? source.endpointId : source.displayName
+    );
+
+    return ndiBaseName_ + " - " + safe;
+}
+
+PerParticipantNdiRouter::ParticipantPipeline& PerParticipantNdiRouter::pipelineFor(
+    const JitsiSourceInfo& source
+) {
+    const std::string key = source.endpointId.empty()
+        ? source.displayName
+        : source.endpointId;
+
+    auto it = pipelines_.find(key);
+
+    if (it != pipelines_.end()) {
+        return *it->second;
+    }
+
+    auto pipeline = std::make_unique<ParticipantPipeline>();
+
+    pipeline->endpointId = key;
+    pipeline->displayName = source.displayName;
+    pipeline->ndi = std::make_unique<NDISender>(sourceNameFor(source));
+
+    pipeline->ndi->start();
+
+    Logger::info(
+        "PerParticipantNdiRouter: created NDI participant source: ",
+        pipeline->ndi->sourceName()
+    );
+
+    auto* ptr = pipeline.get();
+    pipelines_[key] = std::move(pipeline);
+
+    return *ptr;
+}
+
+void PerParticipantNdiRouter::handleRtp(
+    const std::string& mid,
+    const std::uint8_t* data,
+    std::size_t size
+) {
+    const auto rtp = RtpPacket::parse(data, size);
+
+    if (!rtp.valid || rtp.payloadSize == 0) {
+        return;
+    }
+
+    const std::uint8_t payloadType = readRtpPayloadType(data, size);
+
+    auto source = sourceMap_.lookup(rtp.ssrc);
+
+    if (!source) {
+        ++unknownSsrcPackets_;
+
+        if ((unknownSsrcPackets_ % 500) == 0) {
+            Logger::warn(
+                "PerParticipantNdiRouter: unknown SSRC ",
+                RtpPacket::ssrcHex(rtp.ssrc),
+                " mid=",
+                mid,
+                " pt=",
+                static_cast<int>(payloadType)
+            );
+        }
+
+        return;
+    }
+
+    const std::string media = !source->media.empty() ? source->media : mid;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& p = pipelineFor(*source);
+
+    if (media == "audio" || mid == "audio") {
+        ++p.audioPackets;
+        ++routedAudioPackets_;
+
+        for (const auto& decoded : p.audioDecoder.decodeRtpPayload(
+                 rtp.payload,
+                 rtp.payloadSize,
+                 rtp.timestamp
+             )) {
+            p.ndi->sendAudioFrame(decoded);
+        }
+
+        if ((p.audioPackets % 500) == 0) {
+            Logger::info(
+                "PerParticipantNdiRouter: audio packets endpoint=",
+                p.endpointId,
+                " count=",
+                p.audioPackets
+            );
+        }
+
+        return;
+    }
+
+    if (media == "video" || mid == "video") {
+        ++p.videoPackets;
+
+        if (p.videoPackets <= 3 || (p.videoPackets % 300) == 0) {
+            Logger::info(
+                "PerParticipantNdiRouter: video RTP endpoint=",
+                p.endpointId,
+                " pt=",
+                static_cast<int>(rtp.payloadType),
+                " marker=",
+                static_cast<int>(rtp.marker),
+                " payloadBytes=",
+                rtp.payloadSize,
+                " ssrc=",
+                rtp.ssrc
+            );
+        }
+
+        // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
+        // Current meet.jit.si sends AV1 as PT=41. Do not drop it; depacketize AV1 RTP
+        // and feed FFmpeg/dav1d with complete AV1 temporal units.
+        if (rtp.payloadType == 41) {
+            ++routedVideoPackets_;
+            const auto frames = p.av1.pushRtp(rtp);
+            for (const auto& encoded : frames) {
+                for (const auto& decoded : p.av1Decoder.decode(encoded)) {
+                    p.ndi->sendVideoFrame(decoded, 30, 1);
+                }
+            }
+            if ((p.videoPackets % 300) == 0) // PATCH_V10_AUDIO_PLANAR_CLOCK: throttle AV1 frame logs; do not spam console every frame {
+                Logger::info(
+                    "PerParticipantNdiRouter: AV1 video packets endpoint=",
+                    p.endpointId,
+                    " count=",
+                    p.videoPackets,
+                    " producedFrames=",
+                    frames.size()
+                );
+            }
+            return;
+        }
+
+        if (payloadType != kVp8PayloadType) {
+            const std::string dropKey =
+                p.endpointId + ":ssrc-" + RtpPacket::ssrcHex(rtp.ssrc) + ":pt-" + std::to_string(payloadType);
+            const auto dropped = ++g_droppedNonVp8VideoPackets[dropKey];
+            if (dropped == 1 || (dropped % 300) == 0) {
+                Logger::warn(
+                    "PerParticipantNdiRouter: dropping unsupported non-AV1/non-VP8 video RTP endpoint=",
+                    p.endpointId,
+                    " ssrc=",
+                    RtpPacket::ssrcHex(rtp.ssrc),
+                    " pt=",
+                    static_cast<int>(payloadType),
+                    " dropped=",
+                    dropped
+                );
+            }
+            return;
+        }
+
+        ++routedVideoPackets_;
+        auto encoded = p.vp8.push(rtp);
+        if (encoded) {
+            for (const auto& decoded : p.videoDecoder.decode(*encoded)) {
+                p.ndi->sendVideoFrame(decoded, 30, 1);
+            }
+        }
+        if ((p.videoPackets % 300) == 0) {
+            Logger::info(
+                "PerParticipantNdiRouter: VP8 video packets endpoint=",
+                p.endpointId,
+                " count=",
+                p.videoPackets,
+                " pt=",
+                static_cast<int>(payloadType)
+            );
+        }
+        return;
+    }
+}

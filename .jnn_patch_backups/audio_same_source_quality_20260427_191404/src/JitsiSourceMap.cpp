@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <regex>
-#include <set>
 #include <sstream>
 
 namespace {
@@ -72,36 +71,6 @@ std::uint32_t parseU32(const std::string& s) {
         return 0;
     }
 }
-
-bool startsWith(const std::string& s, const std::string& prefix) {
-    return s.rfind(prefix, 0) == 0;
-}
-
-std::string endpointFromSourceName(const std::string& rawName) {
-    std::string name = resourceFromJid(rawName);
-    if (name.empty()) {
-        return {};
-    }
-
-    // Jitsi source names are often endpointId-a0 / endpointId-v0 / endpointId-desktop0.
-    // When the owner extension is missing, using the whole source name splits audio and
-    // video into different NDI senders. Strip the media suffix and keep the endpoint id.
-    static const std::regex suffixRe(
-        R"(^(.+?)(?:[-_](?:audio|video|camera|desktop|screen|a|v|d)\d*)$)",
-        std::regex::icase
-    );
-
-    std::smatch m;
-    if (std::regex_match(name, m, suffixRe) && m.size() > 1 && !m[1].str().empty()) {
-        return m[1].str();
-    }
-
-    return name;
-}
-
-bool isFallbackSsrcEndpoint(const std::string& endpointId) {
-    return startsWith(endpointId, "ssrc-");
-}
 } // namespace
 
 std::vector<JitsiSourceInfo> JitsiSourceMap::parseSources(const std::string& xml) {
@@ -117,7 +86,6 @@ std::vector<JitsiSourceInfo> JitsiSourceMap::parseSources(const std::string& xml
             info.ssrc = parseU32(attr(stag, "ssrc"));
             info.media = media;
             info.videoType = attr(stag, "videoType");
-            info.sourceName = attr(stag, "name");
 
             // In Jitsi owner is often nested inside <ssrc-info owner='...'>, not on <source> itself.
             info.ownerJid = attr(stag, "owner");
@@ -126,47 +94,16 @@ std::vector<JitsiSourceInfo> JitsiSourceMap::parseSources(const std::string& xml
                 info.ownerJid = attr(ssrcInfoTag, "owner");
             }
 
-            // Ignore <source ssrc='...'/> entries from <ssrc-group>. They duplicate real source
-            // lines and otherwise can overwrite owner/name metadata with an ssrc-* fallback.
-            if (info.sourceName.empty() && info.ownerJid.empty() && info.videoType.empty()) {
-                continue;
-            }
-
             info.endpointId = resourceFromJid(info.ownerJid);
-            if (info.endpointId.empty()) {
-                info.endpointId = endpointFromSourceName(info.sourceName);
-            }
             if (info.endpointId.empty()) {
                 std::ostringstream oss;
                 oss << "ssrc-" << info.ssrc;
                 info.endpointId = oss.str();
             }
-
             info.displayName = sanitizeForNdiName(info.endpointId);
             if (info.ssrc != 0) result.push_back(std::move(info));
         }
     }
-
-    // Safety fallback for the common single-speaker case: if Jitsi provided a usable
-    // endpoint id for video but not for audio, bind the orphan audio SSRC to that same
-    // endpoint instead of creating a separate audio-only NDI source.
-    std::set<std::string> stableVideoEndpoints;
-    for (const auto& source : result) {
-        if (source.media == "video" && !source.endpointId.empty() && !isFallbackSsrcEndpoint(source.endpointId)) {
-            stableVideoEndpoints.insert(source.endpointId);
-        }
-    }
-
-    if (stableVideoEndpoints.size() == 1) {
-        const std::string endpoint = *stableVideoEndpoints.begin();
-        for (auto& source : result) {
-            if (source.media == "audio" && isFallbackSsrcEndpoint(source.endpointId)) {
-                source.endpointId = endpoint;
-                source.displayName = sanitizeForNdiName(endpoint);
-            }
-        }
-    }
-
     return result;
 }
 

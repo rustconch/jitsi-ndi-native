@@ -1,0 +1,13 @@
+diff --git a/src/PerParticipantNdiRouter.cpp b/src/PerParticipantNdiRouter.cpp
+--- a/src/PerParticipantNdiRouter.cpp
++++ b/src/PerParticipantNdiRouter.cpp
+@@ -214,7 +214,8 @@ void PerParticipantNdiRouter::handleRtp(
+ 
+  }
+ 
+- if ((p.videoPackets % 300) == 0) // PATCH_V10_AUDIO_PLANAR_CLOCK: throttle AV1 frame logs; do not spam console every frame {
++ // PATCH_V10_AUDIO_PLANAR_CLOCK: throttle AV1 frame logs; do not spam console every frame.
++ if ((p.videoPackets % 300) == 0) {
+ 
+  Logger::info(
+ 

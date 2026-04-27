@@ -1,0 +1,80 @@
+diff -ruN a/src/NDISender.cpp b/src/NDISender.cpp
+--- a/src/NDISender.cpp	2026-04-27 14:31:03.818431249 +0000
++++ b/src/NDISender.cpp	2026-04-27 14:31:18.162061602 +0000
+@@ -6,8 +6,36 @@
+ 
+ #if JNN_HAS_NDI
+ 
++#include <mutex>
+ #include <Processing.NDI.Lib.h>
+ 
++namespace {
++
++std::mutex g_ndiRuntimeMutex;
++int g_ndiRuntimeUsers = 0;
++
++bool acquireNdiRuntime() {
++ std::lock_guard<std::mutex> lock(g_ndiRuntimeMutex);
++ if (g_ndiRuntimeUsers == 0 && !NDIlib_initialize()) {
++  return false;
++ }
++ ++g_ndiRuntimeUsers;
++ return true;
++}
++
++void releaseNdiRuntime() {
++ std::lock_guard<std::mutex> lock(g_ndiRuntimeMutex);
++ if (g_ndiRuntimeUsers <= 0) {
++  return;
++ }
++ --g_ndiRuntimeUsers;
++ if (g_ndiRuntimeUsers == 0) {
++  NDIlib_destroy();
++ }
++}
++
++} // namespace
++
+ #endif
+ 
+ NDISender::NDISender(std::string sourceName) : sourceName_(std::move(sourceName)) {}
+@@ -23,7 +51,7 @@
+  if (started_) return true;
+ #if JNN_HAS_NDI
+ 
+- if (!NDIlib_initialize()) {
++ if (!acquireNdiRuntime()) {
+ 
+  Logger::error("NDIlib_initialize failed");
+ 
+@@ -45,7 +73,7 @@
+ 
+  Logger::error("NDIlib_send_create failed for ", sourceName_);
+ 
+- NDIlib_destroy();
++ releaseNdiRuntime();
+  return false;
+ 
+  }
+@@ -77,7 +105,7 @@
+ 
+  }
+ 
+- NDIlib_destroy();
++ releaseNdiRuntime();
+ #endif
+ 
+  started_ = false;
+diff -ruN a/src/PerParticipantNdiRouter.cpp b/src/PerParticipantNdiRouter.cpp
+--- a/src/PerParticipantNdiRouter.cpp	2026-04-27 14:31:03.513421705 +0000
++++ b/src/PerParticipantNdiRouter.cpp	2026-04-27 14:31:03.641756503 +0000
+@@ -5,7 +5,8 @@
+   }
+ 
+   }
+-  if ((p.videoPackets % 300) == 0) // PATCH_V10_AUDIO_PLANAR_CLOCK: throttle AV1 frame logs; do not spam console every frame {
++  // PATCH_V10_AUDIO_PLANAR_CLOCK: throttle AV1 frame logs; do not spam console every frame.
++  if ((p.videoPackets % 300) == 0) {
+ 
+   Logger::info(
+ 

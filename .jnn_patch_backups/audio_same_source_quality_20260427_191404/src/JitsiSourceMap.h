@@ -14,7 +14,6 @@ struct JitsiSourceInfo {
     std::string endpointId;  // stable-ish id from owner resource when possible
     std::string displayName; // fallback = endpointId / ssrc
     std::string videoType;
-    std::string sourceName;  // Jitsi source name, often endpointId-a0 / endpointId-v0
 };
 
 class JitsiSourceMap {

@@ -12,7 +12,6 @@ extern "C" {
 }
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -199,27 +198,11 @@ struct FfmpegOpusDecoder::Impl {
     AVFrame* frame = nullptr;
     SwrContext* swr = nullptr;
     AVChannelLayout outLayout{};
-    int swrInSampleRate = 0;
-    int swrInChannels = 0;
-    AVSampleFormat swrInFormat = AV_SAMPLE_FMT_NONE;
 
     Impl() {
-        const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_OPUS);
-        if (!codec) throw std::runtime_error("FFmpeg Opus decoder not found");
-
-        dec = avcodec_alloc_context3(codec);
-        if (!dec) throw std::runtime_error("avcodec_alloc_context3 failed");
-
-        // Raw RTP Opus has no container to provide this metadata. Set it before opening.
+        dec = openDecoder(AV_CODEC_ID_OPUS);
         dec->sample_rate = 48000;
         av_channel_layout_default(&dec->ch_layout, 2);
-
-        const int rc = avcodec_open2(dec, codec, nullptr);
-        if (rc < 0) {
-            avcodec_free_context(&dec);
-            throwIfNeg(rc, "avcodec_open2 opus");
-        }
-
         frame = av_frame_alloc();
         if (!frame) throw std::runtime_error("av_frame_alloc failed");
         av_channel_layout_default(&outLayout, 2);
@@ -233,44 +216,20 @@ struct FfmpegOpusDecoder::Impl {
     }
 
     void ensureSwr(const AVFrame* in) {
-        AVChannelLayout inLayout{};
-        if (in->ch_layout.nb_channels > 0) {
-            throwIfNeg(av_channel_layout_copy(&inLayout, &in->ch_layout), "av_channel_layout_copy");
-        } else {
-            av_channel_layout_default(&inLayout, 2);
-        }
-
-        const int inSampleRate = in->sample_rate > 0 ? in->sample_rate : 48000;
-        const int inChannels = inLayout.nb_channels > 0 ? inLayout.nb_channels : 2;
-        const auto inFormat = static_cast<AVSampleFormat>(in->format);
-
-        if (swr && swrInSampleRate == inSampleRate && swrInChannels == inChannels && swrInFormat == inFormat) {
-            av_channel_layout_uninit(&inLayout);
-            return;
-        }
-
-        if (swr) {
-            swr_free(&swr);
-        }
-
+        if (swr) return;
         int rc = swr_alloc_set_opts2(
             &swr,
             &outLayout,
-            AV_SAMPLE_FMT_FLTP,   // NDI audio v2 expects float32 planar: L block, then R block.
-            48000,
-            &inLayout,
-            inFormat,
-            inSampleRate,
+            AV_SAMPLE_FMT_FLTP,
+            48000, // PATCH_V10_AUDIO_PLANAR_CLOCK: planar float for NDI
+            &in->ch_layout,
+            static_cast<AVSampleFormat>(in->format),
+            in->sample_rate > 0 ? in->sample_rate : 48000,
             0,
             nullptr
         );
-        av_channel_layout_uninit(&inLayout);
         throwIfNeg(rc, "swr_alloc_set_opts2");
         throwIfNeg(swr_init(swr), "swr_init");
-
-        swrInSampleRate = inSampleRate;
-        swrInChannels = inChannels;
-        swrInFormat = inFormat;
     }
 };
 
@@ -290,7 +249,6 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
     av_new_packet(pkt, static_cast<int>(payloadSize));
     std::memcpy(pkt->data, payload, payloadSize);
     pkt->pts = rtpTimestamp;
-    pkt->dts = rtpTimestamp;
     const int sendRc = avcodec_send_packet(impl_->dec, pkt);
     av_packet_free(&pkt);
     if (sendRc < 0) return out;
@@ -300,69 +258,47 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
         if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) break;
         if (rc < 0) break;
 
-        try {
-            impl_->ensureSwr(impl_->frame);
-        } catch (const std::exception& e) {
+        try { impl_->ensureSwr(impl_->frame); } catch (const std::exception& e) {
             Logger::warn("Opus resampler init failed: ", e.what());
             av_frame_unref(impl_->frame);
             break;
         }
 
-        const int inSamples = impl_->frame->nb_samples;
-        if (inSamples <= 0) {
-            av_frame_unref(impl_->frame);
-            continue;
-        }
-
-        int outCapacity = swr_get_out_samples(impl_->swr, inSamples);
-        if (outCapacity <= 0) {
-            outCapacity = inSamples;
-        }
-
+        const int samples = impl_->frame->nb_samples;
         DecodedAudioFrameFloat32Planar f;
         f.sampleRate = 48000;
         f.channels = 2;
-        f.samples = outCapacity;
+        f.samples = samples;
         f.pts48k = impl_->frame->best_effort_timestamp >= 0 ? impl_->frame->best_effort_timestamp : rtpTimestamp;
-        f.planar.resize(static_cast<std::size_t>(f.channels) * outCapacity);
+        f.planar.resize(static_cast<std::size_t>(f.channels) * samples);
 
         std::uint8_t* outPlanes[2] = {
             reinterpret_cast<std::uint8_t*>(f.planar.data()),
-            reinterpret_cast<std::uint8_t*>(f.planar.data() + outCapacity)
+            reinterpret_cast<std::uint8_t*>(f.planar.data() + samples)
         };
         const int converted = swr_convert(
             impl_->swr,
             outPlanes,
-            outCapacity,
+            samples,
             const_cast<const std::uint8_t**>(impl_->frame->extended_data),
-            inSamples
+            impl_->frame->nb_samples
         );
         if (converted > 0) {
             f.samples = converted;
             f.planar.resize(static_cast<std::size_t>(f.channels) * converted);
-
-            for (auto& sample : f.planar) {
-                if (!std::isfinite(sample)) {
-                    sample = 0.0f;
-                } else if (sample > 1.0f) {
-                    sample = 1.0f;
-                } else if (sample < -1.0f) {
-                    sample = -1.0f;
-                }
-            }
-
             static std::uint64_t decodedAudioFrames = 0;
-            ++decodedAudioFrames;
-            if (decodedAudioFrames == 1 || (decodedAudioFrames % 500) == 0) {
-                Logger::info(
-                    "FfmpegOpusDecoder: decoded audio frame samples=",
-                    f.samples,
-                    " channels=",
-                    f.channels,
-                    " format=fltp"
-                );
-            }
-            out.push_back(std::move(f));
+                ++decodedAudioFrames;
+                // PATCH_V10_AUDIO_PLANAR_CLOCK_DECODE_LOG
+                if (decodedAudioFrames == 1 || (decodedAudioFrames % 500) == 0) {
+                    Logger::info(
+                        "FfmpegOpusDecoder: decoded audio frame samples=",
+                        f.samples,
+                        " channels=",
+                        f.channels,
+                        " format=fltp"
+                    );
+                }
+                out.push_back(std::move(f));
         }
         av_frame_unref(impl_->frame);
     }

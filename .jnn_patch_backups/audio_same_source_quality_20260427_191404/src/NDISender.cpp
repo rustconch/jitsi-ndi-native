@@ -26,7 +26,7 @@ bool NDISender::start() {
     NDIlib_send_create_t createDesc{};
     createDesc.p_ndi_name = sourceName_.c_str();
     createDesc.clock_video = false;
-    createDesc.clock_audio = false; // Audio is paced by incoming WebRTC RTP; do not block the RTP callback thread
+    createDesc.clock_audio = true; // PATCH_V10_AUDIO_PLANAR_CLOCK: let NDI pace audio; Opus/RTP decode is already 20 ms frames
 
     ndiSend_ = NDIlib_send_create(&createDesc);
     if (!ndiSend_) {

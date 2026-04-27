@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -44,25 +43,15 @@ private:
         std::uint64_t audioPackets = 0;
     };
 
-    ParticipantPipeline& pipelineForLocked(const JitsiSourceInfo& source);
-    std::string pipelineKeyForLocked(const JitsiSourceInfo& source) const;
+    ParticipantPipeline& pipelineFor(const JitsiSourceInfo& source);
     std::string sourceNameFor(const JitsiSourceInfo& source) const;
-    void updatePayloadTypesFromJingleXmlLocked(const std::string& xml);
-    bool isAcceptedOpusPayloadTypeLocked(std::uint8_t payloadType) const;
-    bool isAcceptedAv1PayloadTypeLocked(std::uint8_t payloadType) const;
-    bool isAcceptedVp8PayloadTypeLocked(std::uint8_t payloadType) const;
 
     std::string ndiBaseName_;
     JitsiSourceMap sourceMap_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::unique_ptr<ParticipantPipeline>> pipelines_;
 
-    std::set<std::uint8_t> opusPayloadTypes_{111};
-    std::set<std::uint8_t> av1PayloadTypes_{41};
-    std::set<std::uint8_t> vp8PayloadTypes_{100};
-
     std::uint64_t routedAudioPackets_ = 0;
     std::uint64_t routedVideoPackets_ = 0;
     std::uint64_t unknownSsrcPackets_ = 0;
-    std::uint64_t droppedNonOpusAudioPackets_ = 0;
 };
