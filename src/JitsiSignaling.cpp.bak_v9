@@ -331,6 +331,7 @@ void JitsiSignaling::joinMuc() {
     Logger::info("Joining MUC room as: ", mucJid());
 
     std::ostringstream xml;
+
     xml
         << "<presence xmlns='jabber:client'"
         << " to='" << xmlEscape(mucJid()) << "'>";
@@ -348,13 +349,10 @@ void JitsiSignaling::joinMuc() {
         << " node='https://github.com/jitsi-ndi-native'"
         << " ver='native'/>";
 
-    // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
-    // JVB is an SFU and normally forwards the codec produced by the browser.
-    // In current meet.jit.si rooms that is often AV1/PT=41, so advertise AV1 too.
-    // Keep this XML well-formed; previous VP8-only patch left stray text after the tag.
-    xml << "<jitsi_participant_codecList>av1,vp8,opus</jitsi_participant_codecList>";
+    xml << "<jitsi_participant_codecList>vp8,opus</jitsi_participant_codecList>vp8,opus";
 
     xml << "</presence>";
+
     sendRaw(xml.str());
 }
 

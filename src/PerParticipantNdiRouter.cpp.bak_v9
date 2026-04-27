@@ -152,53 +152,43 @@ void PerParticipantNdiRouter::handleRtp(
 
     if (media == "video" || mid == "video") {
         ++p.videoPackets;
-
+        // REVERT_VP8_AUDIO_V6_VIDEO_PT_LOG
         if (p.videoPackets <= 3 || (p.videoPackets % 300) == 0) {
             Logger::info(
-                "PerParticipantNdiRouter: video RTP endpoint=",
-                p.endpointId,
-                " pt=",
-                static_cast<int>(rtp.payloadType),
-                " marker=",
-                static_cast<int>(rtp.marker),
-                " payloadBytes=",
-                rtp.payloadSize,
-                " ssrc=",
-                rtp.ssrc
+                "PerParticipantNdiRouter: video RTP endpoint=", p.endpointId,
+                " pt=", static_cast<int>(rtp.payloadType),
+                " marker=", static_cast<int>(rtp.marker),
+                " payloadBytes=", rtp.payloadSize,
+                " ssrc=", rtp.ssrc
             );
         }
+        // VP8-stable path: route VP8 into the VP8 depacketizer/decoder.
+        ++routedVideoPackets_;
 
-        // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
-        // Current meet.jit.si sends AV1 as PT=41. Do not drop it; depacketize AV1 RTP
-        // and feed FFmpeg/dav1d with complete AV1 temporal units.
-        if (rtp.payloadType == 41) {
-            ++routedVideoPackets_;
-            const auto frames = p.av1.pushRtp(rtp);
-            for (const auto& encoded : frames) {
-                for (const auto& decoded : p.av1Decoder.decode(encoded)) {
-                    p.ndi->sendVideoFrame(decoded, 30, 1);
-                }
-            }
-            if ((p.videoPackets % 300) == 0 || !frames.empty()) {
-                Logger::info(
-                    "PerParticipantNdiRouter: AV1 video packets endpoint=",
-                    p.endpointId,
-                    " count=",
-                    p.videoPackets,
-                    " producedFrames=",
-                    frames.size()
-                );
-            }
-            return;
-        }
+    // AV1 dav1d branch disabled by repo-patch-v8 VP8-stable mode; non-VP8 video is dropped below.
+        
 
+
+        /*
+            Jitsi offer may contain AV1/VP8/H264/VP9 at the same time.
+            The active decoder path is VP8-only.
+
+            If AV1/VP9/H264 RTP packets are received despite VP8-only negotiation,
+            FFmpeg prints errors like:
+                [vp8] Unknown profile
+                [vp8] Header size larger than data provided
+
+            So here we allow only VP8 PT=100 into the existing VP8 depacketizer.
+        */
         if (payloadType != kVp8PayloadType) {
             const std::string dropKey =
                 p.endpointId + ":ssrc-" + RtpPacket::ssrcHex(rtp.ssrc) + ":pt-" + std::to_string(payloadType);
+
             const auto dropped = ++g_droppedNonVp8VideoPackets[dropKey];
+
             if (dropped == 1 || (dropped % 300) == 0) {
                 Logger::warn(
-                    "PerParticipantNdiRouter: dropping unsupported non-AV1/non-VP8 video RTP endpoint=",
+                    "PerParticipantNdiRouter: dropping non-VP8 video RTP endpoint=",
                     p.endpointId,
                     " ssrc=",
                     RtpPacket::ssrcHex(rtp.ssrc),
@@ -208,19 +198,21 @@ void PerParticipantNdiRouter::handleRtp(
                     dropped
                 );
             }
+
             return;
         }
 
-        ++routedVideoPackets_;
         auto encoded = p.vp8.push(rtp);
+
         if (encoded) {
             for (const auto& decoded : p.videoDecoder.decode(*encoded)) {
                 p.ndi->sendVideoFrame(decoded, 30, 1);
             }
         }
+
         if ((p.videoPackets % 300) == 0) {
             Logger::info(
-                "PerParticipantNdiRouter: VP8 video packets endpoint=",
+                "PerParticipantNdiRouter: video packets endpoint=",
                 p.endpointId,
                 " count=",
                 p.videoPackets,
@@ -228,6 +220,7 @@ void PerParticipantNdiRouter::handleRtp(
                 static_cast<int>(payloadType)
             );
         }
+
         return;
     }
 }

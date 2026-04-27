@@ -295,11 +295,8 @@ bool isSupportedAudioCodec(const JingleCodec& codec) {
 
 bool isSupportedVideoCodec(const JingleCodec& codec) {
     const std::string name = toLower(codec.name);
-
-    // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
-    // The bridge forwards the sender's encoded stream; it does not transcode AV1 to VP8 for us.
-    // Accept the two codecs we actually route/decode in this native pipeline.
-    return name == "av1" || name == "vp8";
+    // Stable path: advertise/accept only VP8 because the wired decoder path is VP8.
+    return name == "vp8";
 }
 
 bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {

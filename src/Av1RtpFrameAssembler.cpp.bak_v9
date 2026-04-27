@@ -276,9 +276,7 @@ bool Av1RtpFrameAssembler::appendObuElement(
 }
 
 bool Av1RtpFrameAssembler::appendCompletedObu(const std::uint8_t* data, std::size_t size) {
-    if (!data || size == 0) {
-        return true;
-    }
+    if (!data || size == 0) return true;
 
     const std::uint8_t header = data[0];
     if ((header & 0x80) != 0 || (header & 0x01) != 0) {
@@ -287,10 +285,8 @@ bool Av1RtpFrameAssembler::appendCompletedObu(const std::uint8_t* data, std::siz
             Logger::warn(
                 "Av1RtpFrameAssembler: malformed AV1 OBU header=",
                 static_cast<int>(header),
-                " size=",
-                size,
-                " malformed=",
-                malformedPayloads_
+                " size=", size,
+                " malformed=", malformedPayloads_
             );
         }
         return false;
@@ -305,47 +301,23 @@ bool Av1RtpFrameAssembler::appendCompletedObu(const std::uint8_t* data, std::siz
     }
 
     const std::size_t headerBytes = 1 + (hasExtension ? 1u : 0u);
-    if (size < headerBytes) {
-        return false;
-    }
+    if (size < headerBytes) return false;
 
-    // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
-    // FFmpeg/dav1d expects AV1 low-overhead OBUs with obu_has_size_field=1.
-    // RTP AV1 payloads commonly omit the size field, and some senders keep the header bit
-    // inconsistent. Normalize every OBU element into a self-contained low-overhead OBU.
     std::vector<std::uint8_t> normalized;
     normalized.reserve(size + 8);
 
-    const std::uint8_t fixedHeader = static_cast<std::uint8_t>(header | 0x02);
-    normalized.push_back(fixedHeader);
-
-    std::size_t payloadPos = 1;
-    if (hasExtension) {
-        normalized.push_back(data[payloadPos]);
-        ++payloadPos;
-    }
-
     if (hasSizeField) {
-        std::size_t afterLeb = payloadPos;
-        std::size_t declaredPayloadSize = 0;
-        if (readLeb128(data, size, afterLeb, declaredPayloadSize)) {
-            const std::size_t declaredTotalSize = afterLeb + declaredPayloadSize;
-            if (declaredTotalSize == size) {
-                // A consistent obu_size field is already present. Preserve it.
-                normalized.insert(normalized.end(), data + payloadPos, data + size);
-            } else {
-                // Header said size field was present, but the bytes do not describe this element.
-                // Treat the element as RTP-style payload without a valid OBU size field.
-                writeLeb128(static_cast<std::uint64_t>(size - payloadPos), normalized);
-                normalized.insert(normalized.end(), data + payloadPos, data + size);
-            }
-        } else {
-            writeLeb128(static_cast<std::uint64_t>(size - payloadPos), normalized);
-            normalized.insert(normalized.end(), data + payloadPos, data + size);
-        }
+        normalized.insert(normalized.end(), data, data + size);
     } else {
-        writeLeb128(static_cast<std::uint64_t>(size - payloadPos), normalized);
-        normalized.insert(normalized.end(), data + payloadPos, data + size);
+        const std::uint8_t fixedHeader = static_cast<std::uint8_t>(header | 0x02);
+        normalized.push_back(fixedHeader);
+        std::size_t pos = 1;
+        if (hasExtension) {
+            normalized.push_back(data[pos]);
+            ++pos;
+        }
+        writeLeb128(static_cast<std::uint64_t>(size - pos), normalized);
+        normalized.insert(normalized.end(), data + pos, data + size);
     }
 
     if (obuType == kObuSequenceHeader) {

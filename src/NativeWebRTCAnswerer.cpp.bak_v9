@@ -253,9 +253,58 @@ std::string joinPayloadTypes(const std::vector<std::string>& payloadTypes) {
 }
 
 std::string forceVp8OnlyVideoSdp(const std::string& sdp) {
-    // PATCH_V9_AV1_RESTORE_AUDIO_UNBLOCK:
-    // Do not strip AV1. JVB/SFU forwards sender codec and current rooms send PT=41/AV1.
-    return sdp;
+    // Stable path: this build has a wired VP8 depacketizer + FFmpeg VP8 decoder.
+    // Keep only VP8 in the video media section so JVB does not select AV1/VP9/H264.
+    std::vector<std::string> vp8PayloadTypes = extractVideoPayloadTypesByCodec(sdp, "VP8");
+    if (vp8PayloadTypes.empty()) {
+        // Jitsi commonly uses PT 100 for VP8; keep this as a fallback for synthetic SDP.
+        vp8PayloadTypes.push_back("100");
+    }
+
+    const std::set<std::string> allowedVideoPayloadTypes(
+        vp8PayloadTypes.begin(), vp8PayloadTypes.end()
+    );
+    const std::string allowedVideoPayloadList = joinPayloadTypes(vp8PayloadTypes);
+
+    std::istringstream input(sdp);
+    std::ostringstream output;
+    std::string line;
+    bool inVideo = false;
+
+    while (std::getline(input, line)) {
+        line = trimTrailingCr(line);
+        if (startsWith(line, "m=")) {
+            inVideo = startsWith(line, "m=video ");
+            if (inVideo) {
+                std::istringstream parts(line);
+                std::string media;
+                std::string port;
+                std::string proto;
+                parts >> media >> port >> proto;
+                if (!media.empty() && !port.empty() && !proto.empty() && !allowedVideoPayloadList.empty()) {
+                    output << media << " " << port << " " << proto << " " << allowedVideoPayloadList << "\r\n";
+                    continue;
+                }
+            }
+            output << line << "\r\n";
+            continue;
+        }
+
+        if (inVideo) {
+            if (isCodecSpecificSdpAttribute(line) && !shouldKeepCodecSpecificVideoLine(line, allowedVideoPayloadTypes)) {
+                continue;
+            }
+            // AV1/SVC extensions are not needed on the VP8-stable path.
+            if (line.find("aomediacodec.github.io/av1-rtp-spec") != std::string::npos ||
+                line.find("video-layers-allocation00") != std::string::npos) {
+                continue;
+            }
+        }
+
+        output << line << "\r\n";
+    }
+
+    return output.str();
 }
 
 /*
