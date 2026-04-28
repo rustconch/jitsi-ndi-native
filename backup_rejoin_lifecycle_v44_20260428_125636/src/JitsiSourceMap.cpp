@@ -1,4 +1,4 @@
-#include "JitsiSourceMap.h"
+﻿#include "JitsiSourceMap.h"
 
 #include <algorithm>
 #include <cctype>
@@ -136,44 +136,6 @@ std::vector<std::string> sourceNamesFromSourceInfo(const std::string& xml) {
 
     return out;
 }
-
-std::set<std::uint32_t> parseRetransmissionSsrcsFromXml(const std::string& xml) {
-    std::set<std::uint32_t> out;
-
-    const std::regex groupRe(
-        R"(<ssrc-group(?:\s|>)[^>]*semantics\s*=\s*(['"])FID\1[\s\S]*?</ssrc-group>)",
-        std::regex::icase
-    );
-
-    const std::regex sourceRe(R"(<source(?:\s|>)[^>]*ssrc\s*=\s*(['"])(\d+)\1[^>]*(?:/>|>))", std::regex::icase);
-
-    for (auto groupIt = std::sregex_iterator(xml.begin(), xml.end(), groupRe);
-         groupIt != std::sregex_iterator();
-         ++groupIt) {
-        const std::string group = (*groupIt)[0].str();
-        std::vector<std::uint32_t> groupSsrcs;
-
-        for (auto sourceIt = std::sregex_iterator(group.begin(), group.end(), sourceRe);
-             sourceIt != std::sregex_iterator();
-             ++sourceIt) {
-            if ((*sourceIt).size() > 2) {
-                const auto value = parseU32((*sourceIt)[2].str());
-                if (value != 0) {
-                    groupSsrcs.push_back(value);
-                }
-            }
-        }
-
-        // In a Jitsi FID group, the first SSRC is the primary media stream and
-        // following SSRCs are retransmission/RTX. Do not feed RTX packets into
-        // the AV1/VP8 media assembler as if they were primary video packets.
-        for (std::size_t i = 1; i < groupSsrcs.size(); ++i) {
-            out.insert(groupSsrcs[i]);
-        }
-    }
-
-    return out;
-}
 } // namespace
 
 std::vector<JitsiSourceInfo> JitsiSourceMap::parseSources(const std::string& xml) {
@@ -264,30 +226,16 @@ void JitsiSourceMap::updateDisplayNamesFromXml(const std::string& xml) {
     const std::string presenceTag = firstTag(xml, "presence");
     std::string endpoint = resourceFromJid(attr(presenceTag, "from"));
 
-    std::vector<std::string> endpointsToUpdate;
+    std::lock_guard<std::mutex> lock(mutex_);
 
     if (!endpoint.empty() && !isFallbackSsrcEndpoint(endpoint)) {
-        endpointsToUpdate.push_back(endpoint);
+        displayNameByEndpoint_[endpoint] = displayName;
     }
 
     for (const auto& sourceName : sourceNamesFromSourceInfo(xml)) {
         const std::string sourceEndpoint = endpointFromSourceName(sourceName);
-        if (!sourceEndpoint.empty() && !isFallbackSsrcEndpoint(sourceEndpoint) &&
-            std::find(endpointsToUpdate.begin(), endpointsToUpdate.end(), sourceEndpoint) == endpointsToUpdate.end()) {
-            endpointsToUpdate.push_back(sourceEndpoint);
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    for (const auto& ep : endpointsToUpdate) {
-        displayNameByEndpoint_[ep] = displayName;
-    }
-
-    for (auto& kv : bySsrc_) {
-        auto& source = kv.second;
-        if (std::find(endpointsToUpdate.begin(), endpointsToUpdate.end(), source.endpointId) != endpointsToUpdate.end()) {
-            source.displayName = displayName;
+        if (!sourceEndpoint.empty() && !isFallbackSsrcEndpoint(sourceEndpoint)) {
+            displayNameByEndpoint_[sourceEndpoint] = displayName;
         }
     }
 }
@@ -295,22 +243,10 @@ void JitsiSourceMap::updateFromJingleXml(const std::string& xml) {
     updateDisplayNamesFromXml(xml);
 
     const auto sources = parseSources(xml);
-    const auto rtxSsrcs = parseRetransmissionSsrcsFromXml(xml);
-
-    if (sources.empty() && rtxSsrcs.empty()) return;
+    if (sources.empty()) return;
 
     std::lock_guard<std::mutex> lock(mutex_);
-
-    for (const auto ssrc : rtxSsrcs) {
-        rtxSsrcs_.insert(ssrc);
-        bySsrc_.erase(ssrc);
-    }
-
     for (auto s : sources) {
-        if (rtxSsrcs_.find(s.ssrc) != rtxSsrcs_.end()) {
-            continue;
-        }
-
         const auto it = displayNameByEndpoint_.find(s.endpointId);
         if (it != displayNameByEndpoint_.end() && !it->second.empty()) {
             s.displayName = it->second;
@@ -320,30 +256,9 @@ void JitsiSourceMap::updateFromJingleXml(const std::string& xml) {
 }
 void JitsiSourceMap::removeFromJingleXml(const std::string& xml) {
     const auto sources = parseSources(xml);
-    const auto rtxSsrcs = parseRetransmissionSsrcsFromXml(xml);
-    if (sources.empty() && rtxSsrcs.empty()) return;
+    if (sources.empty()) return;
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& s : sources) bySsrc_.erase(s.ssrc);
-    for (const auto ssrc : rtxSsrcs) rtxSsrcs_.erase(ssrc);
-}
-
-void JitsiSourceMap::removeEndpoint(const std::string& endpointId) {
-    if (endpointId.empty() || isFallbackSsrcEndpoint(endpointId)) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    for (auto it = bySsrc_.begin(); it != bySsrc_.end();) {
-        const auto& s = it->second;
-        if (s.endpointId == endpointId || startsWith(s.sourceName, endpointId + "-") || startsWith(s.sourceName, endpointId + "_")) {
-            it = bySsrc_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    displayNameByEndpoint_.erase(endpointId);
 }
 
 std::optional<JitsiSourceInfo> JitsiSourceMap::lookup(std::uint32_t ssrc) const {
@@ -351,11 +266,6 @@ std::optional<JitsiSourceInfo> JitsiSourceMap::lookup(std::uint32_t ssrc) const 
     const auto it = bySsrc_.find(ssrc);
     if (it == bySsrc_.end()) return std::nullopt;
     return it->second;
-}
-
-bool JitsiSourceMap::isRtxSsrc(std::uint32_t ssrc) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return rtxSsrcs_.find(ssrc) != rtxSsrcs_.end();
 }
 
 std::vector<JitsiSourceInfo> JitsiSourceMap::allSources() const {

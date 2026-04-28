@@ -1,0 +1,10 @@
+--- /mnt/data/jitsi_ndi_native_media_stability_v43_20260428/src/JitsiSourceMap.h	2026-04-28 09:30:02.661432648 +0000
++++ /mnt/data/work_v44/src/JitsiSourceMap.h	2026-04-28 09:49:55.186480098 +0000
+@@ -22,6 +22,7 @@
+ public:
+     void updateFromJingleXml(const std::string& xml);
+     void removeFromJingleXml(const std::string& xml);
++    void removeEndpoint(const std::string& endpointId);
+     void updateDisplayNamesFromXml(const std::string& xml);
+ 
+     std::optional<JitsiSourceInfo> lookup(std::uint32_t ssrc) const;

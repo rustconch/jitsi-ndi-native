@@ -1,11 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 struct JitsiSourceInfo {
@@ -22,11 +21,9 @@ class JitsiSourceMap {
 public:
     void updateFromJingleXml(const std::string& xml);
     void removeFromJingleXml(const std::string& xml);
-    void removeEndpoint(const std::string& endpointId);
     void updateDisplayNamesFromXml(const std::string& xml);
 
     std::optional<JitsiSourceInfo> lookup(std::uint32_t ssrc) const;
-    bool isRtxSsrc(std::uint32_t ssrc) const;
     std::vector<JitsiSourceInfo> allSources() const;
 
     static std::vector<JitsiSourceInfo> parseSources(const std::string& xml);
@@ -35,7 +32,6 @@ public:
 private:
     mutable std::mutex mutex_;
     std::unordered_map<std::uint32_t, JitsiSourceInfo> bySsrc_;
-    std::unordered_set<std::uint32_t> rtxSsrcs_;
     std::unordered_map<std::string, std::string> displayNameByEndpoint_;
 };
 

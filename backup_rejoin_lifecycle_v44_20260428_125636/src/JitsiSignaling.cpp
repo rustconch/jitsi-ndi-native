@@ -1,4 +1,4 @@
-#include "JitsiSignaling.h"
+﻿#include "JitsiSignaling.h"
 
 
 #include <algorithm>
@@ -801,17 +801,7 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
     handleRoomMetadata(xml);
 
     if (ndiRouter_) {
-        const bool isPresence = contains(xml, "<presence");
-        const bool isUnavailablePresence =
-            isPresence &&
-            containsAnyQuoteAttr(xml, "type", "unavailable") &&
-            !contains(xml, "status code='110'") &&
-            !contains(xml, "status code=\"110\"");
-
-        if (isUnavailablePresence) {
-            Logger::info("MEDIA EVENT: participant unavailable; cleaning stale NDI/source mappings.");
-            ndiRouter_->handleParticipantUnavailableXml(xml);
-        } else if (isPresence || contains(xml, "<message")) {
+        if (contains(xml, "<presence") || contains(xml, "<message")) {
             ndiRouter_->updateSourcesFromJingleXml(xml);
         }
     }
@@ -842,8 +832,6 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
         if (ndiRouter_) {
             ndiRouter_->updateSourcesFromJingleXml(xml);
         }
-
-        answerer_.updateReceiverSourcesFromJingleXml(xml);
 
         sendIqResult(to, id);
         return;

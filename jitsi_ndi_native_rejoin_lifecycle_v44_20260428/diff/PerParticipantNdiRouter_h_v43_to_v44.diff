@@ -1,0 +1,28 @@
+--- /mnt/data/jitsi_ndi_native_media_stability_v43_20260428/src/PerParticipantNdiRouter.h	2026-04-28 09:30:35.674789552 +0000
++++ /mnt/data/work_v44/src/PerParticipantNdiRouter.h	2026-04-28 09:50:33.887878613 +0000
+@@ -22,6 +22,7 @@
+ 
+     void updateSourcesFromJingleXml(const std::string& xml);
+     void removeSourcesFromJingleXml(const std::string& xml);
++    void handleParticipantUnavailableXml(const std::string& xml);
+ 
+     void handleRtp(const std::string& mid, const std::uint8_t* data, std::size_t size);
+ 
+@@ -47,6 +48,9 @@
+     ParticipantPipeline& pipelineForLocked(const JitsiSourceInfo& source);
+     std::string pipelineKeyForLocked(const JitsiSourceInfo& source) const;
+     std::string sourceNameFor(const JitsiSourceInfo& source) const;
++    void removePipelineLocked(const std::string& key, const std::string& reason);
++    void removeEndpointPipelinesLocked(const std::string& endpointId, const std::string& reason);
++    void updateDisplayNameLifecycleFromXml(const std::string& xml);
+     void updatePayloadTypesFromJingleXmlLocked(const std::string& xml);
+     bool isAcceptedOpusPayloadTypeLocked(std::uint8_t payloadType) const;
+     bool isAcceptedAv1PayloadTypeLocked(std::uint8_t payloadType) const;
+@@ -56,6 +60,7 @@
+     JitsiSourceMap sourceMap_;
+     mutable std::mutex mutex_;
+     std::unordered_map<std::string, std::unique_ptr<ParticipantPipeline>> pipelines_;
++    std::unordered_map<std::string, std::string> displayNameByEndpoint_;
+ 
+     std::set<std::uint8_t> opusPayloadTypes_{111};
+     std::set<std::uint8_t> av1PayloadTypes_{41};

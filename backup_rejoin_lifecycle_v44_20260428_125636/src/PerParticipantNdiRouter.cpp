@@ -1,4 +1,4 @@
-#include "PerParticipantNdiRouter.h"
+﻿#include "PerParticipantNdiRouter.h"
 
 #include "Logger.h"
 
@@ -103,108 +103,6 @@ bool isFallbackSsrcEndpoint(const std::string& endpointId) {
     return startsWith(endpointId, "ssrc-");
 }
 
-
-std::string resourceFromJid(const std::string& jid) {
-    const auto slash = jid.rfind('/');
-    if (slash != std::string::npos && slash + 1 < jid.size()) {
-        return jid.substr(slash + 1);
-    }
-    return jid;
-}
-
-std::string tagText(const std::string& xml, const std::string& name) {
-    const std::regex re("<" + name + R"((?:\s[^>]*)?>([\s\S]*?)</)" + name + R"(>)", std::regex::icase);
-    std::smatch m;
-    if (std::regex_search(xml, m, re) && m.size() > 1) {
-        return xmlUnescape(m[1].str());
-    }
-    return {};
-}
-
-std::string trimCopy(std::string s) {
-    auto notSpace = [](unsigned char c) { return !std::isspace(c); };
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
-    s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
-    return s;
-}
-
-std::string endpointFromSourceName(const std::string& rawName) {
-    std::string name = resourceFromJid(rawName);
-    if (name.empty()) {
-        return {};
-    }
-
-    static const std::regex suffixRe(
-        R"(^(.+?)(?:[-_](?:audio|video|camera|desktop|screen|a|v|d)\d*)$)",
-        std::regex::icase
-    );
-
-    std::smatch m;
-    if (std::regex_match(name, m, suffixRe) && m.size() > 1 && !m[1].str().empty()) {
-        return m[1].str();
-    }
-
-    return name;
-}
-
-void appendUnique(std::vector<std::string>& values, const std::string& value) {
-    if (value.empty() || isFallbackSsrcEndpoint(value)) {
-        return;
-    }
-
-    if (std::find(values.begin(), values.end(), value) == values.end()) {
-        values.push_back(value);
-    }
-}
-
-std::vector<std::string> sourceNamesFromSourceInfo(const std::string& xml) {
-    std::vector<std::string> out;
-    const std::string sourceInfo = xmlUnescape(tagText(xml, "SourceInfo"));
-    if (sourceInfo.empty()) {
-        return out;
-    }
-
-    const std::regex keyRe(R"KEY("([^"]+)"\s*:)KEY");
-    for (auto it = std::sregex_iterator(sourceInfo.begin(), sourceInfo.end(), keyRe);
-         it != std::sregex_iterator();
-         ++it) {
-        if ((*it).size() > 1) {
-            out.push_back((*it)[1].str());
-        }
-    }
-
-    return out;
-}
-
-std::vector<std::string> endpointsFromPresenceLikeXml(const std::string& xml) {
-    std::vector<std::string> endpoints;
-
-    const std::string presenceTag = firstTag(xml, "presence");
-    const std::string fromEndpoint = resourceFromJid(attr(presenceTag, "from"));
-    if (!fromEndpoint.empty() && fromEndpoint != "focus") {
-        appendUnique(endpoints, fromEndpoint);
-    }
-
-    for (const auto& sourceName : sourceNamesFromSourceInfo(xml)) {
-        appendUnique(endpoints, endpointFromSourceName(sourceName));
-    }
-
-    return endpoints;
-}
-
-std::string displayNameFromPresenceLikeXml(const std::string& xml) {
-    std::string displayName = trimCopy(tagText(xml, "nick"));
-    if (displayName.empty()) {
-        displayName = trimCopy(tagText(xml, "display-name"));
-    }
-
-    if (displayName.empty()) {
-        return {};
-    }
-
-    return JitsiSourceMap::sanitizeForNdiName(displayName);
-}
-
 struct ParsedPayloadTypes {
     std::set<std::uint8_t> opus;
     std::set<std::uint8_t> av1;
@@ -266,123 +164,12 @@ PerParticipantNdiRouter::PerParticipantNdiRouter(std::string ndiBaseName)
 
 PerParticipantNdiRouter::~PerParticipantNdiRouter() = default;
 
-void PerParticipantNdiRouter::removePipelineLocked(const std::string& key, const std::string& reason) {
-    if (key.empty()) {
-        return;
-    }
-
-    auto it = pipelines_.find(key);
-    if (it == pipelines_.end()) {
-        return;
-    }
-
-    const std::string sourceName = it->second && it->second->ndi
-        ? it->second->ndi->sourceName()
-        : std::string("<unknown>");
-
-    Logger::info(
-        "PerParticipantNdiRouter: removing stale NDI pipeline source=",
-        sourceName,
-        " endpoint=",
-        key,
-        " reason=",
-        reason
-    );
-
-    pipelines_.erase(it);
-}
-
-void PerParticipantNdiRouter::removeEndpointPipelinesLocked(const std::string& endpointId, const std::string& reason) {
-    if (endpointId.empty() || isFallbackSsrcEndpoint(endpointId)) {
-        return;
-    }
-
-    for (auto it = pipelines_.begin(); it != pipelines_.end();) {
-        const std::string& key = it->first;
-        const bool belongsToEndpoint =
-            key == endpointId ||
-            startsWith(key, endpointId + "-") ||
-            startsWith(key, endpointId + "_");
-
-        if (!belongsToEndpoint) {
-            ++it;
-            continue;
-        }
-
-        const std::string sourceName = it->second && it->second->ndi
-            ? it->second->ndi->sourceName()
-            : std::string("<unknown>");
-
-        Logger::info(
-            "PerParticipantNdiRouter: removing endpoint NDI pipeline source=",
-            sourceName,
-            " endpoint=",
-            key,
-            " owner=",
-            endpointId,
-            " reason=",
-            reason
-        );
-
-        it = pipelines_.erase(it);
-    }
-}
-
-void PerParticipantNdiRouter::updateDisplayNameLifecycleFromXml(const std::string& xml) {
-    const std::string displayName = displayNameFromPresenceLikeXml(xml);
-    if (displayName.empty() || displayName == "unknown") {
-        return;
-    }
-
-    const auto endpoints = endpointsFromPresenceLikeXml(xml);
-    if (endpoints.empty()) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& endpoint : endpoints) {
-        auto it = displayNameByEndpoint_.find(endpoint);
-        if (it != displayNameByEndpoint_.end() && it->second != displayName) {
-            Logger::info(
-                "PerParticipantNdiRouter: display name changed for endpoint=",
-                endpoint,
-                " old=",
-                it->second,
-                " new=",
-                displayName,
-                "; recycling NDI pipelines for this endpoint"
-            );
-            removeEndpointPipelinesLocked(endpoint, "display-name-changed");
-        }
-
-        displayNameByEndpoint_[endpoint] = displayName;
-    }
-}
-
-void PerParticipantNdiRouter::handleParticipantUnavailableXml(const std::string& xml) {
-    const auto endpoints = endpointsFromPresenceLikeXml(xml);
-    if (endpoints.empty()) {
-        return;
-    }
-
-    for (const auto& endpoint : endpoints) {
-        sourceMap_.removeEndpoint(endpoint);
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& endpoint : endpoints) {
-        displayNameByEndpoint_.erase(endpoint);
-        removeEndpointPipelinesLocked(endpoint, "presence-unavailable");
-    }
-}
-
 void PerParticipantNdiRouter::updateSourcesFromJingleXml(const std::string& xml) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         updatePayloadTypesFromJingleXmlLocked(xml);
     }
 
-    updateDisplayNameLifecycleFromXml(xml);
     sourceMap_.updateDisplayNamesFromXml(xml);
 
     if (xml.find("<source") == std::string::npos) {
@@ -397,21 +184,7 @@ void PerParticipantNdiRouter::removeSourcesFromJingleXml(const std::string& xml)
         return;
     }
 
-    const auto removedSources = JitsiSourceMap::parseSources(xml);
-
     sourceMap_.removeFromJingleXml(xml);
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& source : removedSources) {
-        // Audio source-remove may simply mean mute/unmute and should not kill the camera NDI sender.
-        // Video source-remove means camera/screen stopped or participant rejoined with new SSRCs;
-        // recycle the old decoder/NDI sender so re-add can create a clean source.
-        if (source.media != "video") {
-            continue;
-        }
-
-        removePipelineLocked(pipelineKeyForLocked(source), "source-remove");
-    }
 }
 
 void PerParticipantNdiRouter::updatePayloadTypesFromJingleXmlLocked(const std::string& xml) {
@@ -595,21 +368,6 @@ void PerParticipantNdiRouter::handleRtp(
 
     const std::uint8_t payloadType = readRtpPayloadType(data, size);
 
-    if (mid == "video" && sourceMap_.isRtxSsrc(rtp.ssrc)) {
-        const auto dropped = ++droppedRtxVideoPackets_;
-        if (dropped == 1 || (dropped % 300) == 0) {
-            Logger::warn(
-                "PerParticipantNdiRouter: dropping RTX/retransmission video RTP ssrc=",
-                RtpPacket::ssrcHex(rtp.ssrc),
-                " pt=",
-                static_cast<int>(payloadType),
-                " dropped=",
-                dropped
-            );
-        }
-        return;
-    }
-
     auto source = sourceMap_.lookup(rtp.ssrc);
 
     if (!source) {
@@ -643,25 +401,6 @@ void PerParticipantNdiRouter::handleRtp(
     }
 
     const std::string media = !source->media.empty() ? source->media : mid;
-
-    if (media == "audio" || mid == "audio") {
-        if (startsWith(source->endpointId, "jvb") || startsWith(source->sourceName, "jvb")) {
-            const auto dropped = ++droppedJvbAudioPackets_;
-            if (dropped == 1 || (dropped % 200) == 0) {
-                Logger::warn(
-                    "PerParticipantNdiRouter: dropping JVB/mixed placeholder audio ssrc=",
-                    RtpPacket::ssrcHex(rtp.ssrc),
-                    " source=",
-                    source->sourceName,
-                    " endpoint=",
-                    source->endpointId,
-                    " dropped=",
-                    dropped
-                );
-            }
-            return;
-        }
-    }
 
     std::lock_guard<std::mutex> lock(mutex_);
     auto& p = pipelineForLocked(*source);

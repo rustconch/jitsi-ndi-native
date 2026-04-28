@@ -1,0 +1,36 @@
+--- /mnt/data/repo_full/jitsi-ndi-native-main/src/JitsiSignaling.cpp	2026-04-27 21:15:48.000000000 +0000
++++ /mnt/data/work_v44/src/JitsiSignaling.cpp	2026-04-28 09:53:44.311259739 +0000
+@@ -1,4 +1,4 @@
+-﻿#include "JitsiSignaling.h"
++#include "JitsiSignaling.h"
+ 
+ 
+ #include <algorithm>
+@@ -801,7 +801,17 @@
+     handleRoomMetadata(xml);
+ 
+     if (ndiRouter_) {
+-        if (contains(xml, "<presence") || contains(xml, "<message")) {
++        const bool isPresence = contains(xml, "<presence");
++        const bool isUnavailablePresence =
++            isPresence &&
++            containsAnyQuoteAttr(xml, "type", "unavailable") &&
++            !contains(xml, "status code='110'") &&
++            !contains(xml, "status code=\"110\"");
++
++        if (isUnavailablePresence) {
++            Logger::info("MEDIA EVENT: participant unavailable; cleaning stale NDI/source mappings.");
++            ndiRouter_->handleParticipantUnavailableXml(xml);
++        } else if (isPresence || contains(xml, "<message")) {
+             ndiRouter_->updateSourcesFromJingleXml(xml);
+         }
+     }
+@@ -833,6 +843,8 @@
+             ndiRouter_->updateSourcesFromJingleXml(xml);
+         }
+ 
++        answerer_.updateReceiverSourcesFromJingleXml(xml);
++
+         sendIqResult(to, id);
+         return;
+     }

@@ -37,7 +37,6 @@ public:
     void setMediaPacketCallback(MediaPacketCallback cb);
 
     bool createAnswer(const JingleSession& session, Answer& outAnswer);
-    void updateReceiverSourcesFromJingleXml(const std::string& xml);
     void addRemoteCandidate(const LocalIceCandidate& candidate);
     void resetSession();
 

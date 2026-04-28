@@ -1,0 +1,10 @@
+--- /mnt/data/repo_full/jitsi-ndi-native-main/src/NativeWebRTCAnswerer.h	2026-04-27 21:15:48.000000000 +0000
++++ /mnt/data/work_v44/src/NativeWebRTCAnswerer.h	2026-04-28 09:51:55.042989381 +0000
+@@ -37,6 +37,7 @@
+     void setMediaPacketCallback(MediaPacketCallback cb);
+ 
+     bool createAnswer(const JingleSession& session, Answer& outAnswer);
++    void updateReceiverSourcesFromJingleXml(const std::string& xml);
+     void addRemoteCandidate(const LocalIceCandidate& candidate);
+     void resetSession();
+ 

@@ -1,0 +1,234 @@
+--- /mnt/data/jitsi_ndi_native_media_stability_v43_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 09:29:47.092250882 +0000
++++ /mnt/data/work_v44/src/NativeWebRTCAnswerer.cpp	2026-04-28 09:53:18.290688357 +0000
+@@ -487,6 +487,104 @@
+     return values;
+ }
+ 
++
++std::string xmlUnescapeLocal(std::string s) {
++    auto repl = [&](const std::string& a, const std::string& b) {
++        std::size_t pos = 0;
++        while ((pos = s.find(a, pos)) != std::string::npos) {
++            s.replace(pos, a.size(), b);
++            pos += b.size();
++        }
++    };
++    repl("&quot;", "\"");
++    repl("&apos;", "'");
++    repl("&lt;", "<");
++    repl("&gt;", ">");
++    repl("&amp;", "&");
++    return s;
++}
++
++std::string xmlAttrLocal(const std::string& tag, const std::string& name) {
++    const std::regex re(name + R"(\s*=\s*(['"])(.*?)\1)", std::regex::icase);
++    std::smatch m;
++    if (std::regex_search(tag, m, re) && m.size() > 2) {
++        return xmlUnescapeLocal(m[2].str());
++    }
++    return {};
++}
++
++std::string firstXmlTagLocal(const std::string& xml, const std::string& name) {
++    const std::regex re("<" + name + R"((?:\s|>|/)[\s\S]*?>)", std::regex::icase);
++    std::smatch m;
++    if (std::regex_search(xml, m, re)) {
++        return m[0].str();
++    }
++    return {};
++}
++
++std::vector<std::string> xmlContentBlocksLocal(const std::string& xml) {
++    std::vector<std::string> out;
++    const std::regex re(R"(<content(?:\s|>)[\s\S]*?</content>)", std::regex::icase);
++    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), re); it != std::sregex_iterator(); ++it) {
++        out.push_back((*it)[0].str());
++    }
++    return out;
++}
++
++std::vector<std::string> xmlSourceBlocksLocal(const std::string& xml) {
++    std::vector<std::string> out;
++    const std::regex blockRe(R"(<source(?:\s|>)[\s\S]*?</source>)", std::regex::icase);
++    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), blockRe); it != std::sregex_iterator(); ++it) {
++        out.push_back((*it)[0].str());
++    }
++    const std::regex selfRe(R"(<source(?:\s|>)[\s\S]*?/>)", std::regex::icase);
++    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), selfRe); it != std::sregex_iterator(); ++it) {
++        out.push_back((*it)[0].str());
++    }
++    return out;
++}
++
++std::vector<std::string> extractJingleSourceNamesByMedia(const std::string& xml, const std::string& wantedMedia) {
++    std::vector<std::string> values;
++    std::set<std::string> seen;
++
++    for (const auto& content : xmlContentBlocksLocal(xml)) {
++        const std::string contentTag = firstXmlTagLocal(content, "content");
++        const std::string descriptionTag = firstXmlTagLocal(content, "description");
++
++        std::string media = xmlAttrLocal(contentTag, "name");
++        if (media.empty()) {
++            media = xmlAttrLocal(descriptionTag, "media");
++        }
++
++        if (media != wantedMedia) {
++            continue;
++        }
++
++        for (const auto& sourceBlock : xmlSourceBlocksLocal(content)) {
++            const std::string sourceTag = firstXmlTagLocal(sourceBlock, "source");
++            const std::string name = xmlAttrLocal(sourceTag, "name");
++            if (!name.empty() && seen.insert(name).second) {
++                values.push_back(name);
++            }
++        }
++    }
++
++    return values;
++}
++
++std::vector<std::string> mergeUniqueStrings(std::vector<std::string> base, const std::vector<std::string>& added) {
++    for (const auto& value : added) {
++        if (value.empty()) {
++            continue;
++        }
++        if (std::find(base.begin(), base.end(), value) == base.end()) {
++            base.push_back(value);
++        }
++    }
++    return base;
++}
++
+ std::string jsonStringArray(const std::vector<std::string>& values) {
+     std::ostringstream out;
+ 
+@@ -798,6 +896,9 @@
+ 
+     bool localDescriptionReady = false;
+     std::string localSdp;
++
++    std::vector<std::string> knownVideoSources;
++    std::vector<std::string> knownAudioSources;
+ };
+ 
+ NativeWebRTCAnswerer::NativeWebRTCAnswerer()
+@@ -820,6 +921,53 @@
+     onMediaPacket_ = std::move(cb);
+ }
+ 
++void NativeWebRTCAnswerer::updateReceiverSourcesFromJingleXml(const std::string& xml) {
++#if JNN_WITH_NATIVE_WEBRTC
++    const auto addedVideoSources = extractJingleSourceNamesByMedia(xml, "video");
++    const auto addedAudioSources = extractJingleSourceNamesByMedia(xml, "audio");
++
++    if (addedVideoSources.empty() && addedAudioSources.empty()) {
++        return;
++    }
++
++    std::shared_ptr<rtc::DataChannel> channel;
++    std::vector<std::string> allVideoSources;
++    std::vector<std::string> allAudioSources;
++
++    {
++        std::lock_guard<std::mutex> lock(impl_->mutex);
++        impl_->knownVideoSources = mergeUniqueStrings(impl_->knownVideoSources, addedVideoSources);
++        impl_->knownAudioSources = mergeUniqueStrings(impl_->knownAudioSources, addedAudioSources);
++
++        channel = impl_->bridgeChannel;
++        allVideoSources = impl_->knownVideoSources;
++        allAudioSources = impl_->knownAudioSources;
++    }
++
++    if (!channel) {
++        Logger::warn("NativeWebRTCAnswerer: source-add/update received but bridge datachannel is not available");
++        return;
++    }
++
++    Logger::info(
++        "NativeWebRTCAnswerer: updating receiver subscriptions from Jingle source update; videoSources=",
++        allVideoSources.size(),
++        " audioSources=",
++        allAudioSources.size()
++    );
++
++    if (!allVideoSources.empty()) {
++        sendReceiverVideoConstraints(channel, allVideoSources, "jingle-source-update");
++    }
++
++    if (!allAudioSources.empty()) {
++        sendReceiverAudioSubscriptionInclude(channel, allAudioSources, "jingle-source-update");
++    }
++#else
++    (void)xml;
++#endif
++}
++
+ void NativeWebRTCAnswerer::resetSession() {
+ #if JNN_WITH_NATIVE_WEBRTC
+     std::shared_ptr<rtc::PeerConnection> oldPc;
+@@ -840,6 +988,8 @@
+ 
+         impl_->localDescriptionReady = false;
+         impl_->localSdp.clear();
++        impl_->knownVideoSources.clear();
++        impl_->knownAudioSources.clear();
+     }
+ 
+     if (oldBridgeChannel) {
+@@ -861,6 +1011,8 @@
+     std::lock_guard<std::mutex> lock(impl_->mutex);
+     impl_->localDescriptionReady = false;
+     impl_->localSdp.clear();
++    impl_->knownVideoSources.clear();
++    impl_->knownAudioSources.clear();
+ #endif
+ }
+ 
+@@ -924,6 +1076,12 @@
+         );
+     }
+ 
++    {
++        std::lock_guard<std::mutex> lock(impl_->mutex);
++        impl_->knownVideoSources = initialVideoSources;
++        impl_->knownAudioSources = initialAudioSources;
++    }
++
+     rtc::Configuration config;
+     config.forceMediaTransport = true;
+ 
+@@ -1002,6 +1160,7 @@
+         });
+ 
+         bridgeChannel->onMessage([
++            this,
+             bridgeChannel,
+             latestForwardedSources,
+             latestForwardedSourcesMutex,
+@@ -1054,6 +1213,11 @@
+                         *latestForwardedSources = sources;
+                     }
+ 
++                    {
++                        std::lock_guard<std::mutex> lock(impl_->mutex);
++                        impl_->knownVideoSources = mergeUniqueStrings(impl_->knownVideoSources, sources);
++                    }
++
+                     Logger::info(
+                         "NativeWebRTCAnswerer: VideoSourcesMap parsed count=",
+                         sources.size(),
+@@ -1078,6 +1242,11 @@
+                     *latestForwardedSources = sources;
+                 }
+ 
++                if (!sources.empty()) {
++                    std::lock_guard<std::mutex> lock(impl_->mutex);
++                    impl_->knownVideoSources = mergeUniqueStrings(impl_->knownVideoSources, sources);
++                }
++
+                 if (sources.empty()) {
+                     Logger::info(
+                         "NativeWebRTCAnswerer: ForwardedSources is empty; falling back to SDP-source constraints"

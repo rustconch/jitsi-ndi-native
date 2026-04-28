@@ -22,7 +22,6 @@ public:
 
     void updateSourcesFromJingleXml(const std::string& xml);
     void removeSourcesFromJingleXml(const std::string& xml);
-    void handleParticipantUnavailableXml(const std::string& xml);
 
     void handleRtp(const std::string& mid, const std::uint8_t* data, std::size_t size);
 
@@ -48,9 +47,6 @@ private:
     ParticipantPipeline& pipelineForLocked(const JitsiSourceInfo& source);
     std::string pipelineKeyForLocked(const JitsiSourceInfo& source) const;
     std::string sourceNameFor(const JitsiSourceInfo& source) const;
-    void removePipelineLocked(const std::string& key, const std::string& reason);
-    void removeEndpointPipelinesLocked(const std::string& endpointId, const std::string& reason);
-    void updateDisplayNameLifecycleFromXml(const std::string& xml);
     void updatePayloadTypesFromJingleXmlLocked(const std::string& xml);
     bool isAcceptedOpusPayloadTypeLocked(std::uint8_t payloadType) const;
     bool isAcceptedAv1PayloadTypeLocked(std::uint8_t payloadType) const;
@@ -60,7 +56,6 @@ private:
     JitsiSourceMap sourceMap_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::unique_ptr<ParticipantPipeline>> pipelines_;
-    std::unordered_map<std::string, std::string> displayNameByEndpoint_;
 
     std::set<std::uint8_t> opusPayloadTypes_{111};
     std::set<std::uint8_t> av1PayloadTypes_{41};
@@ -70,6 +65,4 @@ private:
     std::uint64_t routedVideoPackets_ = 0;
     std::uint64_t unknownSsrcPackets_ = 0;
     std::uint64_t droppedNonOpusAudioPackets_ = 0;
-    std::uint64_t droppedJvbAudioPackets_ = 0;
-    std::uint64_t droppedRtxVideoPackets_ = 0;
 };

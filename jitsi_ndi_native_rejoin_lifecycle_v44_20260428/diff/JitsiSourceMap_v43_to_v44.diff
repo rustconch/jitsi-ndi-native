@@ -1,0 +1,63 @@
+--- /mnt/data/jitsi_ndi_native_media_stability_v43_20260428/src/JitsiSourceMap.cpp	2026-04-28 09:30:26.799585509 +0000
++++ /mnt/data/work_v44/src/JitsiSourceMap.cpp	2026-04-28 09:54:01.016585300 +0000
+@@ -264,16 +264,30 @@
+     const std::string presenceTag = firstTag(xml, "presence");
+     std::string endpoint = resourceFromJid(attr(presenceTag, "from"));
+ 
+-    std::lock_guard<std::mutex> lock(mutex_);
++    std::vector<std::string> endpointsToUpdate;
+ 
+     if (!endpoint.empty() && !isFallbackSsrcEndpoint(endpoint)) {
+-        displayNameByEndpoint_[endpoint] = displayName;
++        endpointsToUpdate.push_back(endpoint);
+     }
+ 
+     for (const auto& sourceName : sourceNamesFromSourceInfo(xml)) {
+         const std::string sourceEndpoint = endpointFromSourceName(sourceName);
+-        if (!sourceEndpoint.empty() && !isFallbackSsrcEndpoint(sourceEndpoint)) {
+-            displayNameByEndpoint_[sourceEndpoint] = displayName;
++        if (!sourceEndpoint.empty() && !isFallbackSsrcEndpoint(sourceEndpoint) &&
++            std::find(endpointsToUpdate.begin(), endpointsToUpdate.end(), sourceEndpoint) == endpointsToUpdate.end()) {
++            endpointsToUpdate.push_back(sourceEndpoint);
++        }
++    }
++
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    for (const auto& ep : endpointsToUpdate) {
++        displayNameByEndpoint_[ep] = displayName;
++    }
++
++    for (auto& kv : bySsrc_) {
++        auto& source = kv.second;
++        if (std::find(endpointsToUpdate.begin(), endpointsToUpdate.end(), source.endpointId) != endpointsToUpdate.end()) {
++            source.displayName = displayName;
+         }
+     }
+ }
+@@ -313,6 +327,25 @@
+     for (const auto ssrc : rtxSsrcs) rtxSsrcs_.erase(ssrc);
+ }
+ 
++void JitsiSourceMap::removeEndpoint(const std::string& endpointId) {
++    if (endpointId.empty() || isFallbackSsrcEndpoint(endpointId)) {
++        return;
++    }
++
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    for (auto it = bySsrc_.begin(); it != bySsrc_.end();) {
++        const auto& s = it->second;
++        if (s.endpointId == endpointId || startsWith(s.sourceName, endpointId + "-") || startsWith(s.sourceName, endpointId + "_")) {
++            it = bySsrc_.erase(it);
++        } else {
++            ++it;
++        }
++    }
++
++    displayNameByEndpoint_.erase(endpointId);
++}
++
+ std::optional<JitsiSourceInfo> JitsiSourceMap::lookup(std::uint32_t ssrc) const {
+     std::lock_guard<std::mutex> lock(mutex_);
+     const auto it = bySsrc_.find(ssrc);

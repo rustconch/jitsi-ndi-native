@@ -322,62 +322,6 @@ std::vector<std::string> extractVideoSourceNamesFromSdp(const std::string& sdp) 
     return sources;
 }
 
-std::vector<std::string> extractAudioSourceNamesFromSdp(const std::string& sdp) {
-    std::vector<std::string> sources;
-    std::set<std::string> seen;
-
-    std::istringstream input(sdp);
-    std::string line;
-
-    bool inAudio = false;
-
-    while (std::getline(input, line)) {
-        line = trimTrailingCr(line);
-
-        if (startsWith(line, "m=")) {
-            inAudio = startsWith(line, "m=audio ");
-            continue;
-        }
-
-        if (!inAudio) {
-            continue;
-        }
-
-        if (!startsWith(line, "a=ssrc:")) {
-            continue;
-        }
-
-        const std::string marker = " cname:";
-        const auto markerPos = line.find(marker);
-
-        if (markerPos == std::string::npos) {
-            continue;
-        }
-
-        std::string name = line.substr(markerPos + marker.size());
-
-        if (name.empty()) {
-            continue;
-        }
-
-        // jvb-a0 is the bridge/mixed placeholder. Subscribing to it together with
-        // real endpoint audio can create audible doubling/overlap in NDI/vMix.
-        if (startsWith(name, "jvb")) {
-            continue;
-        }
-
-        if (name.find("-a") == std::string::npos) {
-            continue;
-        }
-
-        if (seen.insert(name).second) {
-            sources.push_back(name);
-        }
-    }
-
-    return sources;
-}
-
 #if JNN_WITH_NATIVE_WEBRTC
 
 void sendBridgeMessage(
@@ -487,104 +431,6 @@ std::vector<std::string> extractVideoSourcesMapSources(const std::string& text) 
     return values;
 }
 
-
-std::string xmlUnescapeLocal(std::string s) {
-    auto repl = [&](const std::string& a, const std::string& b) {
-        std::size_t pos = 0;
-        while ((pos = s.find(a, pos)) != std::string::npos) {
-            s.replace(pos, a.size(), b);
-            pos += b.size();
-        }
-    };
-    repl("&quot;", "\"");
-    repl("&apos;", "'");
-    repl("&lt;", "<");
-    repl("&gt;", ">");
-    repl("&amp;", "&");
-    return s;
-}
-
-std::string xmlAttrLocal(const std::string& tag, const std::string& name) {
-    const std::regex re(name + R"(\s*=\s*(['"])(.*?)\1)", std::regex::icase);
-    std::smatch m;
-    if (std::regex_search(tag, m, re) && m.size() > 2) {
-        return xmlUnescapeLocal(m[2].str());
-    }
-    return {};
-}
-
-std::string firstXmlTagLocal(const std::string& xml, const std::string& name) {
-    const std::regex re("<" + name + R"((?:\s|>|/)[\s\S]*?>)", std::regex::icase);
-    std::smatch m;
-    if (std::regex_search(xml, m, re)) {
-        return m[0].str();
-    }
-    return {};
-}
-
-std::vector<std::string> xmlContentBlocksLocal(const std::string& xml) {
-    std::vector<std::string> out;
-    const std::regex re(R"(<content(?:\s|>)[\s\S]*?</content>)", std::regex::icase);
-    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), re); it != std::sregex_iterator(); ++it) {
-        out.push_back((*it)[0].str());
-    }
-    return out;
-}
-
-std::vector<std::string> xmlSourceBlocksLocal(const std::string& xml) {
-    std::vector<std::string> out;
-    const std::regex blockRe(R"(<source(?:\s|>)[\s\S]*?</source>)", std::regex::icase);
-    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), blockRe); it != std::sregex_iterator(); ++it) {
-        out.push_back((*it)[0].str());
-    }
-    const std::regex selfRe(R"(<source(?:\s|>)[\s\S]*?/>)", std::regex::icase);
-    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), selfRe); it != std::sregex_iterator(); ++it) {
-        out.push_back((*it)[0].str());
-    }
-    return out;
-}
-
-std::vector<std::string> extractJingleSourceNamesByMedia(const std::string& xml, const std::string& wantedMedia) {
-    std::vector<std::string> values;
-    std::set<std::string> seen;
-
-    for (const auto& content : xmlContentBlocksLocal(xml)) {
-        const std::string contentTag = firstXmlTagLocal(content, "content");
-        const std::string descriptionTag = firstXmlTagLocal(content, "description");
-
-        std::string media = xmlAttrLocal(contentTag, "name");
-        if (media.empty()) {
-            media = xmlAttrLocal(descriptionTag, "media");
-        }
-
-        if (media != wantedMedia) {
-            continue;
-        }
-
-        for (const auto& sourceBlock : xmlSourceBlocksLocal(content)) {
-            const std::string sourceTag = firstXmlTagLocal(sourceBlock, "source");
-            const std::string name = xmlAttrLocal(sourceTag, "name");
-            if (!name.empty() && seen.insert(name).second) {
-                values.push_back(name);
-            }
-        }
-    }
-
-    return values;
-}
-
-std::vector<std::string> mergeUniqueStrings(std::vector<std::string> base, const std::vector<std::string>& added) {
-    for (const auto& value : added) {
-        if (value.empty()) {
-            continue;
-        }
-        if (std::find(base.begin(), base.end(), value) == base.end()) {
-            base.push_back(value);
-        }
-    }
-    return base;
-}
-
 std::string jsonStringArray(const std::vector<std::string>& values) {
     std::ostringstream out;
 
@@ -631,56 +477,6 @@ std::vector<std::string> normalizeVideoSourceNamesForConstraints(const std::vect
     }
 
     return out;
-}
-
-std::vector<std::string> normalizeAudioSourceNamesForSubscription(const std::vector<std::string>& sourceNames) {
-    std::vector<std::string> out;
-
-    for (const auto& name : sourceNames) {
-        if (name.empty()) {
-            continue;
-        }
-
-        // Do not subscribe to the bridge/mixed audio placeholder together with
-        // endpoint audio, otherwise the same voice may be heard twice.
-        if (startsWith(name, "jvb")) {
-            continue;
-        }
-
-        if (name.find("-a") == std::string::npos) {
-            continue;
-        }
-
-        bool alreadyPresent = false;
-        for (const auto& existing : out) {
-            if (existing == name) {
-                alreadyPresent = true;
-                break;
-            }
-        }
-
-        if (!alreadyPresent) {
-            out.push_back(name);
-        }
-    }
-
-    return out;
-}
-
-std::string makeReceiverAudioSubscriptionIncludeMessage(const std::vector<std::string>& audioSources) {
-    const std::vector<std::string> realSources = normalizeAudioSourceNamesForSubscription(audioSources);
-
-    if (realSources.empty()) {
-        return "{\"colibriClass\":\"ReceiverAudioSubscription\",\"mode\":\"All\"}";
-    }
-
-    std::ostringstream out;
-    out << "{";
-    out << "\"colibriClass\":\"ReceiverAudioSubscription\",";
-    out << "\"mode\":\"Include\",";
-    out << "\"list\":" << jsonStringArray(realSources);
-    out << "}";
-    return out.str();
 }
 
 std::string makeReceiverVideoConstraintsMessage(
@@ -769,45 +565,25 @@ void sendReceiverVideoConstraints(
         "ReceiverVideoConstraints/v42-stable-selected-only-1080p30/" + reason
     );
 }
-void sendReceiverAudioSubscriptionInclude(
+void sendReceiverAudioSubscriptionAll(
     const std::shared_ptr<rtc::DataChannel>& channel,
-    const std::vector<std::string>& audioSources,
     const std::string& reason
 ) {
-    const auto realSources = normalizeAudioSourceNamesForSubscription(audioSources);
-
-    if (realSources.empty()) {
-        Logger::warn(
-            "NativeWebRTCAnswerer: audio source include-list is empty; falling back to ReceiverAudioSubscription All, reason=",
-            reason
-        );
-    } else {
-        Logger::info(
-            "NativeWebRTCAnswerer: requesting endpoint audio only, sources=",
-            realSources.size(),
-            " reason=",
-            reason
-        );
-    }
-
     sendBridgeMessage(
         channel,
-        makeReceiverAudioSubscriptionIncludeMessage(realSources),
-        realSources.empty()
-            ? "ReceiverAudioSubscription/All-fallback/" + reason
-            : "ReceiverAudioSubscription/Include-endpoint-audio/" + reason
+        "{\"colibriClass\":\"ReceiverAudioSubscription\",\"mode\":\"All\"}",
+        "ReceiverAudioSubscription/" + reason
     );
 }
 
 void scheduleRepeatedAudioSubscriptionRefresh(
-    const std::shared_ptr<rtc::DataChannel>& channel,
-    const std::vector<std::string> audioSources
+    const std::shared_ptr<rtc::DataChannel>& channel
 ) {
     if (!channel) {
         return;
     }
 
-    std::thread([channel, audioSources]() {
+    std::thread([channel]() {
         const int delaysMs[] = {
             1000,
             3000,
@@ -819,7 +595,7 @@ void scheduleRepeatedAudioSubscriptionRefresh(
 
         for (const int delayMs : delaysMs) {
             std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-            sendReceiverAudioSubscriptionInclude(channel, audioSources, "refresh");
+            sendReceiverAudioSubscriptionAll(channel, "refresh");
         }
     }).detach();
 }
@@ -896,9 +672,6 @@ struct NativeWebRTCAnswerer::Impl {
 
     bool localDescriptionReady = false;
     std::string localSdp;
-
-    std::vector<std::string> knownVideoSources;
-    std::vector<std::string> knownAudioSources;
 };
 
 NativeWebRTCAnswerer::NativeWebRTCAnswerer()
@@ -921,53 +694,6 @@ void NativeWebRTCAnswerer::setMediaPacketCallback(MediaPacketCallback cb) {
     onMediaPacket_ = std::move(cb);
 }
 
-void NativeWebRTCAnswerer::updateReceiverSourcesFromJingleXml(const std::string& xml) {
-#if JNN_WITH_NATIVE_WEBRTC
-    const auto addedVideoSources = extractJingleSourceNamesByMedia(xml, "video");
-    const auto addedAudioSources = extractJingleSourceNamesByMedia(xml, "audio");
-
-    if (addedVideoSources.empty() && addedAudioSources.empty()) {
-        return;
-    }
-
-    std::shared_ptr<rtc::DataChannel> channel;
-    std::vector<std::string> allVideoSources;
-    std::vector<std::string> allAudioSources;
-
-    {
-        std::lock_guard<std::mutex> lock(impl_->mutex);
-        impl_->knownVideoSources = mergeUniqueStrings(impl_->knownVideoSources, addedVideoSources);
-        impl_->knownAudioSources = mergeUniqueStrings(impl_->knownAudioSources, addedAudioSources);
-
-        channel = impl_->bridgeChannel;
-        allVideoSources = impl_->knownVideoSources;
-        allAudioSources = impl_->knownAudioSources;
-    }
-
-    if (!channel) {
-        Logger::warn("NativeWebRTCAnswerer: source-add/update received but bridge datachannel is not available");
-        return;
-    }
-
-    Logger::info(
-        "NativeWebRTCAnswerer: updating receiver subscriptions from Jingle source update; videoSources=",
-        allVideoSources.size(),
-        " audioSources=",
-        allAudioSources.size()
-    );
-
-    if (!allVideoSources.empty()) {
-        sendReceiverVideoConstraints(channel, allVideoSources, "jingle-source-update");
-    }
-
-    if (!allAudioSources.empty()) {
-        sendReceiverAudioSubscriptionInclude(channel, allAudioSources, "jingle-source-update");
-    }
-#else
-    (void)xml;
-#endif
-}
-
 void NativeWebRTCAnswerer::resetSession() {
 #if JNN_WITH_NATIVE_WEBRTC
     std::shared_ptr<rtc::PeerConnection> oldPc;
@@ -988,8 +714,6 @@ void NativeWebRTCAnswerer::resetSession() {
 
         impl_->localDescriptionReady = false;
         impl_->localSdp.clear();
-        impl_->knownVideoSources.clear();
-        impl_->knownAudioSources.clear();
     }
 
     if (oldBridgeChannel) {
@@ -1011,8 +735,6 @@ void NativeWebRTCAnswerer::resetSession() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->localDescriptionReady = false;
     impl_->localSdp.clear();
-    impl_->knownVideoSources.clear();
-    impl_->knownAudioSources.clear();
 #endif
 }
 
@@ -1056,7 +778,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     }
 
     const std::vector<std::string> initialVideoSources = extractVideoSourceNamesFromSdp(rawOfferSdp);
-    const std::vector<std::string> initialAudioSources = extractAudioSourceNamesFromSdp(rawOfferSdp);
 
     if (initialVideoSources.empty()) {
         Logger::warn("NativeWebRTCAnswerer: no initial video sources extracted from SDP offer");
@@ -1065,21 +786,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             "NativeWebRTCAnswerer: initial video sources extracted from SDP offer: ",
             joinStrings(initialVideoSources, ",")
         );
-    }
-
-    if (initialAudioSources.empty()) {
-        Logger::warn("NativeWebRTCAnswerer: no endpoint audio sources extracted from SDP offer");
-    } else {
-        Logger::info(
-            "NativeWebRTCAnswerer: endpoint audio sources extracted from SDP offer: ",
-            joinStrings(initialAudioSources, ",")
-        );
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(impl_->mutex);
-        impl_->knownVideoSources = initialVideoSources;
-        impl_->knownAudioSources = initialAudioSources;
     }
 
     rtc::Configuration config;
@@ -1126,8 +832,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             bridgeChannel,
             latestForwardedSources,
             latestForwardedSourcesMutex,
-            initialVideoSources,
-            initialAudioSources
+            initialVideoSources
         ]() {
             Logger::info("NativeWebRTCAnswerer: bridge datachannel opened");
 
@@ -1137,7 +842,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                 "ClientHello"
             );
 
-            sendReceiverAudioSubscriptionInclude(bridgeChannel, initialAudioSources, "open");
+            sendReceiverAudioSubscriptionAll(bridgeChannel, "open");
 
             sendReceiverVideoConstraints(
                 bridgeChannel,
@@ -1148,7 +853,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             // v41: do not run repeated refresh loops.
             // The one-shot open/server-hello/ForwardedSources constraints are enough for JVB,
             // while repeated sends after DataChannel close caused noisy warnings and could destabilize long sessions.
-            Logger::info("NativeWebRTCAnswerer: v43 stable media mode; selected-only video; endpoint-only audio; RTX video SSRCs dropped in router");
+            Logger::info("NativeWebRTCAnswerer: v42 stable selected-only quality mode; all-on-stage disabled; repeated bridge refresh loops disabled");
         });
 
         bridgeChannel->onClosed([]() {
@@ -1160,12 +865,10 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
 
         bridgeChannel->onMessage([
-            this,
             bridgeChannel,
             latestForwardedSources,
             latestForwardedSourcesMutex,
-            initialVideoSources,
-            initialAudioSources
+            initialVideoSources
         ](rtc::message_variant message) {
             std::string text;
 
@@ -1199,7 +902,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                     "server-hello-sdp-sources"
                 );
 
-                sendReceiverAudioSubscriptionInclude(bridgeChannel, initialAudioSources, "server-hello");
+                sendReceiverAudioSubscriptionAll(bridgeChannel, "server-hello");
 
                 return;
             }
@@ -1211,11 +914,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                     {
                         std::lock_guard<std::mutex> lock(*latestForwardedSourcesMutex);
                         *latestForwardedSources = sources;
-                    }
-
-                    {
-                        std::lock_guard<std::mutex> lock(impl_->mutex);
-                        impl_->knownVideoSources = mergeUniqueStrings(impl_->knownVideoSources, sources);
                     }
 
                     Logger::info(
@@ -1240,11 +938,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                 {
                     std::lock_guard<std::mutex> lock(*latestForwardedSourcesMutex);
                     *latestForwardedSources = sources;
-                }
-
-                if (!sources.empty()) {
-                    std::lock_guard<std::mutex> lock(impl_->mutex);
-                    impl_->knownVideoSources = mergeUniqueStrings(impl_->knownVideoSources, sources);
                 }
 
                 if (sources.empty()) {
