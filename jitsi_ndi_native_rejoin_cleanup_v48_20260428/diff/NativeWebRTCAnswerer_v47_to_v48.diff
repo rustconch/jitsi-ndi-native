@@ -1,0 +1,27 @@
+--- /mnt/data/jitsi_ndi_native_rejoin_stability_v47_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 12:10:38.308754534 +0000
++++ /mnt/data/jitsi_ndi_native_rejoin_cleanup_v48_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 12:23:55.837109433 +0000
+@@ -1077,11 +1077,10 @@
+         sendReceiverAudioSubscriptionInclude(channel, allAudioSources, "source-update-known-sources");
+     }
+ 
+-    // v47: after a browser rejoin Jitsi may advertise the source before it has
+-    // fully switched from P2P to JVB upload. A few bounded delayed re-asks help
+-    // the bridge pull the new source without returning to the old infinite
+-    // refresh loop that destabilized the datachannel.
+-    scheduleSourceUpdatePokes(channel, allVideoSources, allAudioSources, "source-update-known-sources");
++    // v48: do not run delayed re-ask bursts here. v47 retries did not recover
++    // missing media on rejoin, but they made source lifecycle harder to reason
++    // about. Keep this as a single immediate update and let subsequent
++    // ForwardedSources/SourceInfo events trigger normal updates.
+ #else
+     (void)xml;
+ #endif
+@@ -1280,7 +1279,7 @@
+             // v41: do not run repeated refresh loops.
+             // The one-shot open/server-hello/ForwardedSources constraints are enough for JVB,
+             // while repeated sends after DataChannel close caused noisy warnings and could destabilize long sessions.
+-            Logger::info("NativeWebRTCAnswerer: v47 rejoin stability mode; selected-only video; endpoint-only audio; delayed source-update re-asks enabled");
++            Logger::info("NativeWebRTCAnswerer: v48 stable rejoin mode; selected-only video; endpoint-only audio; no NDI pre-create; no delayed retry bursts");
+         });
+ 
+         bridgeChannel->onClosed([]() {

@@ -1,0 +1,60 @@
+--- jitsi_ndi_native_rejoin_sources_v46b_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 11:42:01.465965324 +0000
++++ jitsi_ndi_native_rejoin_stability_v47_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 12:10:38.308754534 +0000
+@@ -869,6 +869,35 @@
+     );
+ }
+ 
++void scheduleSourceUpdatePokes(
++    const std::shared_ptr<rtc::DataChannel>& channel,
++    const std::vector<std::string> videoSources,
++    const std::vector<std::string> audioSources,
++    const std::string reason
++) {
++    if (!channel) {
++        return;
++    }
++
++    std::thread([channel, videoSources, audioSources, reason]() {
++        const int delaysMs[] = { 600, 1800, 4500 };
++        int index = 0;
++
++        for (const int delayMs : delaysMs) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
++            const std::string retryReason = reason + "-retry" + std::to_string(++index);
++
++            if (!videoSources.empty()) {
++                sendReceiverVideoConstraints(channel, videoSources, retryReason);
++            }
++
++            if (!audioSources.empty()) {
++                sendReceiverAudioSubscriptionInclude(channel, audioSources, retryReason);
++            }
++        }
++    }).detach();
++}
++
+ void scheduleRepeatedAudioSubscriptionRefresh(
+     const std::shared_ptr<rtc::DataChannel>& channel,
+     const std::vector<std::string> audioSources
+@@ -1047,6 +1076,12 @@
+     if (!allAudioSources.empty()) {
+         sendReceiverAudioSubscriptionInclude(channel, allAudioSources, "source-update-known-sources");
+     }
++
++    // v47: after a browser rejoin Jitsi may advertise the source before it has
++    // fully switched from P2P to JVB upload. A few bounded delayed re-asks help
++    // the bridge pull the new source without returning to the old infinite
++    // refresh loop that destabilized the datachannel.
++    scheduleSourceUpdatePokes(channel, allVideoSources, allAudioSources, "source-update-known-sources");
+ #else
+     (void)xml;
+ #endif
+@@ -1245,7 +1280,7 @@
+             // v41: do not run repeated refresh loops.
+             // The one-shot open/server-hello/ForwardedSources constraints are enough for JVB,
+             // while repeated sends after DataChannel close caused noisy warnings and could destabilize long sessions.
+-            Logger::info("NativeWebRTCAnswerer: v46 rejoin source recovery mode; selected-only video; endpoint-only audio; SourceInfo updates feed receiver constraints");
++            Logger::info("NativeWebRTCAnswerer: v47 rejoin stability mode; selected-only video; endpoint-only audio; delayed source-update re-asks enabled");
+         });
+ 
+         bridgeChannel->onClosed([]() {

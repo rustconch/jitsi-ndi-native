@@ -1,0 +1,140 @@
+--- /mnt/data/jitsi_ndi_native_rejoin_stability_v47_20260428/src/PerParticipantNdiRouter.cpp	2026-04-28 12:10:18.324344823 +0000
++++ /mnt/data/jitsi_ndi_native_rejoin_cleanup_v48_20260428/src/PerParticipantNdiRouter.cpp	2026-04-28 12:23:55.854124441 +0000
+@@ -382,6 +382,10 @@
+                 "; recycling NDI pipelines for this endpoint"
+             );
+             removeEndpointPipelinesLocked(endpoint, "display-name-changed");
++        } else if (it == displayNameByEndpoint_.end()) {
++            // v48: if RTP created a pipeline before the participant nick was known,
++            // recycle it once when the nick arrives so NDI does not keep endpoint/ssrc-like names.
++            removeEndpointPipelinesLocked(endpoint, "display-name-first-known");
+         }
+ 
+         displayNameByEndpoint_[endpoint] = displayName;
+@@ -421,23 +425,11 @@
+     const auto parsedSources = JitsiSourceMap::parseSources(xml);
+     sourceMap_.updateFromJingleXml(xml);
+ 
+-    // v47: Jitsi can announce a rejoined participant through source-add before
+-    // the first RTP packet arrives. Start video NDI pipelines immediately from
+-    // reliable Jingle metadata, so the source is visible in NDI/vMix as soon as
+-    // the participant is announced. Real frames/audio still come only from RTP.
+-    if (!parsedSources.empty()) {
+-        std::lock_guard<std::mutex> lock(mutex_);
+-        for (const auto& source : parsedSources) {
+-            if (source.media != "video") {
+-                continue;
+-            }
+-            if (source.sourceName.empty() || isFallbackSsrcEndpoint(source.endpointId)) {
+-                continue;
+-            }
+-            auto stableSource = sourceMap_.lookup(source.ssrc).value_or(source);
+-            pipelineForLocked(stableSource);
+-        }
+-    }
++    // v48: do not pre-create NDI senders on source-add. A sender is created
++    // only after the first real RTP packet for that exact source arrives.
++    // Pre-creating from metadata caused duplicate/stale NDI sources such as
++    // jvb video, camera/video placeholders, and renamed sources without media.
++    (void)parsedSources;
+ }
+ 
+ void PerParticipantNdiRouter::removeSourcesFromJingleXml(const std::string& xml) {
+@@ -514,7 +506,17 @@
+ 
+     const std::string videoType = toLower(source.videoType);
+ 
+-    std::string humanName = source.displayName;
++    std::string humanName;
++
++    const auto nameIt = displayNameByEndpoint_.find(endpoint);
++    if (nameIt != displayNameByEndpoint_.end() && !nameIt->second.empty()) {
++        humanName = nameIt->second;
++    }
++
++    if (humanName.empty()) {
++        humanName = source.displayName;
++    }
++
+     if (humanName.empty() || humanName == endpoint || isFallbackSsrcEndpoint(humanName)) {
+         humanName = endpoint;
+     }
+@@ -663,10 +665,25 @@
+     if (!source) {
+         ++unknownSsrcPackets_;
+ 
+-        // PATCH_V12_RECOVERY:
+-        // Do not drop all media just because Jitsi changed/omitted SSRC metadata.
+-        // The track MID still tells us whether the packet belongs to audio/video,
+-        // so create a safe SSRC-based fallback NDI source and keep packets flowing.
++        const bool haveKnownSources = !sourceMap_.allSources().empty();
++        if (haveKnownSources) {
++            if (unknownSsrcPackets_ == 1 || (unknownSsrcPackets_ % 200) == 0) {
++                Logger::warn(
++                    "PerParticipantNdiRouter: dropping unknown SSRC ",
++                    RtpPacket::ssrcHex(rtp.ssrc),
++                    " mid=",
++                    mid,
++                    " pt=",
++                    static_cast<int>(payloadType),
++                    "; known source map is present; not creating ssrc-* NDI placeholder"
++                );
++            }
++            return;
++        }
++
++        // Emergency fallback only for very early sessions where the source map is
++        // still empty. Once Jitsi has advertised any real source, unknown SSRCs
++        // are usually RTX/JVB/late stale packets and must not create extra NDI inputs.
+         JitsiSourceInfo fallback;
+         fallback.ssrc = rtp.ssrc;
+         fallback.media = (mid == "audio" || mid == "video") ? mid : "video";
+@@ -682,7 +699,7 @@
+                 mid,
+                 " pt=",
+                 static_cast<int>(payloadType),
+-                "; using fallback endpoint=",
++                "; using emergency fallback endpoint=",
+                 fallback.endpointId
+             );
+         }
+@@ -692,23 +709,23 @@
+ 
+     const std::string media = !source->media.empty() ? source->media : mid;
+ 
+-    if (media == "audio" || mid == "audio") {
+-        if (startsWith(source->endpointId, "jvb") || startsWith(source->sourceName, "jvb")) {
+-            const auto dropped = ++droppedJvbAudioPackets_;
+-            if (dropped == 1 || (dropped % 200) == 0) {
+-                Logger::warn(
+-                    "PerParticipantNdiRouter: dropping JVB/mixed placeholder audio ssrc=",
+-                    RtpPacket::ssrcHex(rtp.ssrc),
+-                    " source=",
+-                    source->sourceName,
+-                    " endpoint=",
+-                    source->endpointId,
+-                    " dropped=",
+-                    dropped
+-                );
+-            }
+-            return;
++    if (startsWith(source->endpointId, "jvb") || startsWith(source->sourceName, "jvb")) {
++        const auto dropped = ++droppedJvbAudioPackets_;
++        if (dropped == 1 || (dropped % 200) == 0) {
++            Logger::warn(
++                "PerParticipantNdiRouter: dropping JVB/mixed placeholder RTP ssrc=",
++                RtpPacket::ssrcHex(rtp.ssrc),
++                " media=",
++                media,
++                " source=",
++                source->sourceName,
++                " endpoint=",
++                source->endpointId,
++                " dropped=",
++                dropped
++            );
+         }
++        return;
+     }
+ 
+     std::lock_guard<std::mutex> lock(mutex_);

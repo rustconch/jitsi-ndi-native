@@ -1,0 +1,29 @@
+--- jitsi_ndi_native_rejoin_sources_v46b_20260428/src/PerParticipantNdiRouter.cpp	2026-04-28 11:35:27.598991602 +0000
++++ jitsi_ndi_native_rejoin_stability_v47_20260428/src/PerParticipantNdiRouter.cpp	2026-04-28 12:10:18.324344823 +0000
+@@ -418,7 +418,26 @@
+         return;
+     }
+ 
++    const auto parsedSources = JitsiSourceMap::parseSources(xml);
+     sourceMap_.updateFromJingleXml(xml);
++
++    // v47: Jitsi can announce a rejoined participant through source-add before
++    // the first RTP packet arrives. Start video NDI pipelines immediately from
++    // reliable Jingle metadata, so the source is visible in NDI/vMix as soon as
++    // the participant is announced. Real frames/audio still come only from RTP.
++    if (!parsedSources.empty()) {
++        std::lock_guard<std::mutex> lock(mutex_);
++        for (const auto& source : parsedSources) {
++            if (source.media != "video") {
++                continue;
++            }
++            if (source.sourceName.empty() || isFallbackSsrcEndpoint(source.endpointId)) {
++                continue;
++            }
++            auto stableSource = sourceMap_.lookup(source.ssrc).value_or(source);
++            pipelineForLocked(stableSource);
++        }
++    }
+ }
+ 
+ void PerParticipantNdiRouter::removeSourcesFromJingleXml(const std::string& xml) {

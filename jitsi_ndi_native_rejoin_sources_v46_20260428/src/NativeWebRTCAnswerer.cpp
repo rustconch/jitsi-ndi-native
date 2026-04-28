@@ -573,6 +573,21 @@ std::vector<std::string> extractVideoSourcesMapSources(const std::string& text) 
 }
 
 
+std::string xmlUnescapeLocal(std::string s) {
+    auto repl = [&](const std::string& a, const std::string& b) {
+        std::size_t pos = 0;
+        while ((pos = s.find(a, pos)) != std::string::npos) {
+            s.replace(pos, a.size(), b);
+            pos += b.size();
+        }
+    };
+    repl("&quot;", "\"");
+    repl("&apos;", "'");
+    repl("&lt;", "<");
+    repl("&gt;", ">");
+    repl("&amp;", "&");
+    return s;
+}
 
 std::string xmlAttrLocal(const std::string& tag, const std::string& name) {
     const std::regex re(name + R"(\s*=\s*(['"])(.*?)\1)", std::regex::icase);
@@ -641,156 +656,6 @@ std::vector<std::string> extractJingleSourceNamesByMedia(const std::string& xml,
     }
 
     return values;
-}
-
-
-struct RemoteSdpSourceUpdate {
-    std::string media;
-    std::uint32_t ssrc = 0;
-    std::string name;
-    std::string owner;
-};
-
-std::uint32_t parseU32Local(const std::string& value) {
-    try {
-        return static_cast<std::uint32_t>(std::stoul(value));
-    } catch (...) {
-        return 0;
-    }
-}
-
-std::vector<RemoteSdpSourceUpdate> extractRemoteSdpSourcesFromJingleXml(const std::string& xml) {
-    std::vector<RemoteSdpSourceUpdate> out;
-    std::set<std::uint32_t> seen;
-
-    for (const auto& content : xmlContentBlocksLocal(xml)) {
-        const std::string contentTag = firstXmlTagLocal(content, "content");
-        const std::string descriptionTag = firstXmlTagLocal(content, "description");
-
-        std::string media = xmlAttrLocal(contentTag, "name");
-        if (media.empty()) {
-            media = xmlAttrLocal(descriptionTag, "media");
-        }
-
-        if (media != "audio" && media != "video") {
-            continue;
-        }
-
-        for (const auto& sourceBlock : xmlSourceBlocksLocal(content)) {
-            const std::string sourceTag = firstXmlTagLocal(sourceBlock, "source");
-            RemoteSdpSourceUpdate src;
-            src.media = media;
-            src.ssrc = parseU32Local(xmlAttrLocal(sourceTag, "ssrc"));
-            src.name = xmlAttrLocal(sourceTag, "name");
-            src.owner = xmlAttrLocal(sourceTag, "owner");
-
-            if (src.owner.empty()) {
-                const std::string ssrcInfoTag = firstXmlTagLocal(sourceBlock, "ssrc-info");
-                src.owner = xmlAttrLocal(ssrcInfoTag, "owner");
-            }
-
-            // Ignore <source ssrc='...'> entries inside <ssrc-group>; they have no
-            // name/owner and are already represented by the real source entries.
-            if (src.ssrc == 0 || (src.name.empty() && src.owner.empty())) {
-                continue;
-            }
-
-            if (startsWith(src.name, "jvb") || startsWith(src.owner, "jvb")) {
-                continue;
-            }
-
-            if (seen.insert(src.ssrc).second) {
-                out.push_back(std::move(src));
-            }
-        }
-    }
-
-    return out;
-}
-
-bool sdpHasSsrc(const std::string& sdp, std::uint32_t ssrc) {
-    const std::string needle = "a=ssrc:" + std::to_string(ssrc) + " ";
-    return sdp.find(needle) != std::string::npos;
-}
-
-std::string makeRemoteSdpSsrcLines(const RemoteSdpSourceUpdate& src) {
-    const std::string cname = src.name.empty() ? std::to_string(src.ssrc) : src.name;
-    const std::string msid = src.name.empty() ? cname : src.name;
-    const std::string trackId = msid + "-track";
-
-    std::ostringstream out;
-    out << "a=ssrc:" << src.ssrc << " cname:" << cname << "\r\n";
-    out << "a=ssrc:" << src.ssrc << " msid:" << msid << " " << trackId << "\r\n";
-    return out.str();
-}
-
-bool appendRemoteSdpLinesToMediaSection(std::string& sdp, const std::string& media, const std::string& lines) {
-    if (lines.empty()) {
-        return false;
-    }
-
-    const std::string midLine = "a=mid:" + media + "\r\n";
-    const std::size_t midPos = sdp.find(midLine);
-    if (midPos == std::string::npos) {
-        return false;
-    }
-
-    std::size_t sectionEnd = sdp.find("\r\nm=", midPos + midLine.size());
-    if (sectionEnd == std::string::npos) {
-        sectionEnd = sdp.size();
-    } else {
-        sectionEnd += 2; // keep insertion before the next m= line, after CRLF
-    }
-
-    std::size_t insertPos = std::string::npos;
-    const std::string endCandidates = "a=end-of-candidates\r\n";
-    const std::size_t endCandidatesPos = sdp.find(endCandidates, midPos);
-    if (endCandidatesPos != std::string::npos && endCandidatesPos < sectionEnd) {
-        insertPos = endCandidatesPos;
-    } else {
-        insertPos = sectionEnd;
-    }
-
-    sdp.insert(insertPos, lines);
-    return true;
-}
-
-bool appendRemoteSdpSourcesFromJingleXml(std::string& sdp, const std::string& xml, std::size_t& addedCount) {
-    addedCount = 0;
-
-    const auto sources = extractRemoteSdpSourcesFromJingleXml(xml);
-    if (sources.empty()) {
-        return false;
-    }
-
-    std::string audioLines;
-    std::string videoLines;
-
-    for (const auto& src : sources) {
-        if (sdpHasSsrc(sdp, src.ssrc)) {
-            continue;
-        }
-
-        RtpSourceRegistry::setSsrcOwner(src.ssrc, src.owner, src.name);
-
-        if (src.media == "audio") {
-            audioLines += makeRemoteSdpSsrcLines(src);
-            ++addedCount;
-        } else if (src.media == "video") {
-            videoLines += makeRemoteSdpSsrcLines(src);
-            ++addedCount;
-        }
-    }
-
-    bool changed = false;
-    if (!audioLines.empty()) {
-        changed = appendRemoteSdpLinesToMediaSection(sdp, "audio", audioLines) || changed;
-    }
-    if (!videoLines.empty()) {
-        changed = appendRemoteSdpLinesToMediaSection(sdp, "video", videoLines) || changed;
-    }
-
-    return changed;
 }
 
 std::vector<std::string> mergeUniqueStrings(std::vector<std::string> base, const std::vector<std::string>& added) {
@@ -1019,35 +884,6 @@ void sendReceiverAudioSubscriptionInclude(
     );
 }
 
-void scheduleSourceUpdatePokes(
-    const std::shared_ptr<rtc::DataChannel>& channel,
-    const std::vector<std::string> videoSources,
-    const std::vector<std::string> audioSources,
-    const std::string reason
-) {
-    if (!channel) {
-        return;
-    }
-
-    std::thread([channel, videoSources, audioSources, reason]() {
-        const int delaysMs[] = { 600, 1800, 4500 };
-        int index = 0;
-
-        for (const int delayMs : delaysMs) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-            const std::string retryReason = reason + "-retry" + std::to_string(++index);
-
-            if (!videoSources.empty()) {
-                sendReceiverVideoConstraints(channel, videoSources, retryReason);
-            }
-
-            if (!audioSources.empty()) {
-                sendReceiverAudioSubscriptionInclude(channel, audioSources, retryReason);
-            }
-        }
-    }).detach();
-}
-
 void scheduleRepeatedAudioSubscriptionRefresh(
     const std::shared_ptr<rtc::DataChannel>& channel,
     const std::vector<std::string> audioSources
@@ -1148,7 +984,6 @@ struct NativeWebRTCAnswerer::Impl {
 
     std::vector<std::string> knownVideoSources;
     std::vector<std::string> knownAudioSources;
-    std::string remoteOfferSdp;
 };
 
 NativeWebRTCAnswerer::NativeWebRTCAnswerer()
@@ -1209,44 +1044,6 @@ void NativeWebRTCAnswerer::updateReceiverSourcesFromJingleXml(const std::string&
         return;
     }
 
-    // v49: Jitsi source-add is not just a bridge constraint update. The native
-    // PeerConnection also needs to learn the new SSRCs, similarly to how Jitsi
-    // clients apply source-add by updating the remote description. Without this,
-    // ForwardedSources can list the new source while libdatachannel never delivers
-    // RTP for its SSRCs to the onTrack/onMessage callback.
-    if (xml.find("<source") != std::string::npos) {
-        std::shared_ptr<rtc::PeerConnection> pc;
-        std::string updatedRemoteOffer;
-        std::size_t addedSsrcs = 0;
-        bool shouldApplyRemoteOffer = false;
-
-        {
-            std::lock_guard<std::mutex> lock(impl_->mutex);
-            pc = impl_->pc;
-            updatedRemoteOffer = impl_->remoteOfferSdp;
-
-            if (pc && !updatedRemoteOffer.empty() && appendRemoteSdpSourcesFromJingleXml(updatedRemoteOffer, xml, addedSsrcs)) {
-                impl_->remoteOfferSdp = updatedRemoteOffer;
-                shouldApplyRemoteOffer = true;
-            }
-        }
-
-        if (shouldApplyRemoteOffer && pc) {
-            try {
-                Logger::info(
-                    "NativeWebRTCAnswerer: applying v49 remote SDP source-add update; addedSsrcs=",
-                    addedSsrcs
-                );
-                pc->setRemoteDescription(rtc::Description(updatedRemoteOffer, "offer"));
-                pc->setLocalDescription();
-            } catch (const std::exception& e) {
-                Logger::warn("NativeWebRTCAnswerer: v49 remote SDP source-add update failed: ", e.what());
-            } catch (...) {
-                Logger::warn("NativeWebRTCAnswerer: v49 remote SDP source-add update failed: unknown error");
-            }
-        }
-    }
-
     Logger::info(
         "NativeWebRTCAnswerer: updating receiver subscriptions from source update; addedVideo=",
         addedVideoSources.size(),
@@ -1265,11 +1062,6 @@ void NativeWebRTCAnswerer::updateReceiverSourcesFromJingleXml(const std::string&
     if (!allAudioSources.empty()) {
         sendReceiverAudioSubscriptionInclude(channel, allAudioSources, "source-update-known-sources");
     }
-
-    // v48: do not run delayed re-ask bursts here. v47 retries did not recover
-    // missing media on rejoin, but they made source lifecycle harder to reason
-    // about. Keep this as a single immediate update and let subsequent
-    // ForwardedSources/SourceInfo events trigger normal updates.
 #else
     (void)xml;
 #endif
@@ -1297,7 +1089,6 @@ void NativeWebRTCAnswerer::resetSession() {
         impl_->localSdp.clear();
         impl_->knownVideoSources.clear();
         impl_->knownAudioSources.clear();
-        impl_->remoteOfferSdp.clear();
     }
 
     if (oldBridgeChannel) {
@@ -1355,7 +1146,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     videoBytes_ = 0;
 
     Logger::info("NativeWebRTCAnswerer: creating libdatachannel PeerConnection");
-    Logger::info("NativeWebRTCAnswerer: v49 source-add remote SDP update mode enabled");
     Logger::warn("NativeWebRTCAnswerer: using remote onTrack raw RTP path with RTCP receiving session");
 
     const std::string rawOfferSdp = buildSdpOfferFromJingle(session);
@@ -1389,7 +1179,6 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->knownVideoSources = initialVideoSources;
         impl_->knownAudioSources = initialAudioSources;
-        impl_->remoteOfferSdp = offerSdp;
     }
 
     rtc::Configuration config;
@@ -1471,7 +1260,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             // v41: do not run repeated refresh loops.
             // The one-shot open/server-hello/ForwardedSources constraints are enough for JVB,
             // while repeated sends after DataChannel close caused noisy warnings and could destabilize long sessions.
-            Logger::info("NativeWebRTCAnswerer: v48 stable rejoin mode; selected-only video; endpoint-only audio; no NDI pre-create; no delayed retry bursts");
+            Logger::info("NativeWebRTCAnswerer: v46 rejoin source recovery mode; selected-only video; endpoint-only audio; SourceInfo updates feed receiver constraints");
         });
 
         bridgeChannel->onClosed([]() {

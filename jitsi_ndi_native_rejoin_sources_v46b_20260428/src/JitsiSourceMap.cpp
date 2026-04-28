@@ -395,137 +395,14 @@ std::vector<JitsiSourceInfo> JitsiSourceMap::allSources() const {
     return out;
 }
 
-namespace {
-const char* transliterateCyrillicCodepoint(unsigned int cp) {
-    switch (cp) {
-    case 0x0410: return "A"; case 0x0430: return "a";
-    case 0x0411: return "B"; case 0x0431: return "b";
-    case 0x0412: return "V"; case 0x0432: return "v";
-    case 0x0413: return "G"; case 0x0433: return "g";
-    case 0x0414: return "D"; case 0x0434: return "d";
-    case 0x0415: return "E"; case 0x0435: return "e";
-    case 0x0401: return "Yo"; case 0x0451: return "yo";
-    case 0x0416: return "Zh"; case 0x0436: return "zh";
-    case 0x0417: return "Z"; case 0x0437: return "z";
-    case 0x0418: return "I"; case 0x0438: return "i";
-    case 0x0419: return "Y"; case 0x0439: return "y";
-    case 0x041A: return "K"; case 0x043A: return "k";
-    case 0x041B: return "L"; case 0x043B: return "l";
-    case 0x041C: return "M"; case 0x043C: return "m";
-    case 0x041D: return "N"; case 0x043D: return "n";
-    case 0x041E: return "O"; case 0x043E: return "o";
-    case 0x041F: return "P"; case 0x043F: return "p";
-    case 0x0420: return "R"; case 0x0440: return "r";
-    case 0x0421: return "S"; case 0x0441: return "s";
-    case 0x0422: return "T"; case 0x0442: return "t";
-    case 0x0423: return "U"; case 0x0443: return "u";
-    case 0x0424: return "F"; case 0x0444: return "f";
-    case 0x0425: return "Kh"; case 0x0445: return "kh";
-    case 0x0426: return "Ts"; case 0x0446: return "ts";
-    case 0x0427: return "Ch"; case 0x0447: return "ch";
-    case 0x0428: return "Sh"; case 0x0448: return "sh";
-    case 0x0429: return "Sch"; case 0x0449: return "sch";
-    case 0x042A: return ""; case 0x044A: return "";
-    case 0x042B: return "Y"; case 0x044B: return "y";
-    case 0x042C: return ""; case 0x044C: return "";
-    case 0x042D: return "E"; case 0x044D: return "e";
-    case 0x042E: return "Yu"; case 0x044E: return "yu";
-    case 0x042F: return "Ya"; case 0x044F: return "ya";
-    default: return nullptr;
-    }
-}
-
-bool nextUtf8Codepoint(const std::string& value, std::size_t& pos, unsigned int& cp) {
-    if (pos >= value.size()) {
-        return false;
-    }
-
-    const unsigned char c0 = static_cast<unsigned char>(value[pos]);
-    if (c0 < 0x80) {
-        cp = c0;
-        ++pos;
-        return true;
-    }
-
-    if ((c0 & 0xE0) == 0xC0 && pos + 1 < value.size()) {
-        const unsigned char c1 = static_cast<unsigned char>(value[pos + 1]);
-        if ((c1 & 0xC0) == 0x80) {
-            cp = ((c0 & 0x1F) << 6) | (c1 & 0x3F);
-            pos += 2;
-            return true;
-        }
-    }
-
-    if ((c0 & 0xF0) == 0xE0 && pos + 2 < value.size()) {
-        const unsigned char c1 = static_cast<unsigned char>(value[pos + 1]);
-        const unsigned char c2 = static_cast<unsigned char>(value[pos + 2]);
-        if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80) {
-            cp = ((c0 & 0x0F) << 12) | ((c1 & 0x3F) << 6) | (c2 & 0x3F);
-            pos += 3;
-            return true;
-        }
-    }
-
-    if ((c0 & 0xF8) == 0xF0 && pos + 3 < value.size()) {
-        const unsigned char c1 = static_cast<unsigned char>(value[pos + 1]);
-        const unsigned char c2 = static_cast<unsigned char>(value[pos + 2]);
-        const unsigned char c3 = static_cast<unsigned char>(value[pos + 3]);
-        if ((c1 & 0xC0) == 0x80 && (c2 & 0xC0) == 0x80 && (c3 & 0xC0) == 0x80) {
-            cp = ((c0 & 0x07) << 18) | ((c1 & 0x3F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
-            pos += 4;
-            return true;
-        }
-    }
-
-    cp = 0xFFFD;
-    ++pos;
-    return true;
-}
-} // namespace
-
 std::string JitsiSourceMap::sanitizeForNdiName(std::string value) {
-    std::string out;
-    out.reserve(value.size());
-
-    std::size_t pos = 0;
-    while (pos < value.size()) {
-        unsigned int cp = 0;
-        if (!nextUtf8Codepoint(value, pos, cp)) {
-            break;
-        }
-
-        if (cp < 0x80) {
-            const char c = static_cast<char>(cp);
-            const auto u = static_cast<unsigned char>(c);
-            if (std::isalnum(u) || c == '-' || c == '_' || c == ' ') {
-                out.push_back(c);
-            } else {
-                out.push_back('_');
-            }
-            continue;
-        }
-
-        if (const char* translit = transliterateCyrillicCodepoint(cp)) {
-            out += translit;
-        } else {
-            out.push_back('_');
-        }
+    for (char& c : value) {
+        const auto u = static_cast<unsigned char>(c);
+        if (!(std::isalnum(u) || u >= 0x80 || c == '-' || c == '_' || c == ' ')) c = '_';
     }
-
-    std::string compact;
-    compact.reserve(out.size());
-    char last = 0;
-    for (char c : out) {
-        if ((c == '_' || c == ' ') && (last == '_' || last == ' ')) {
-            continue;
-        }
-        compact.push_back(c);
-        last = c;
-    }
-
-    while (!compact.empty() && (compact.front() == '_' || compact.front() == ' ')) compact.erase(compact.begin());
-    while (!compact.empty() && (compact.back() == '_' || compact.back() == ' ')) compact.pop_back();
-    return compact.empty() ? "unknown" : compact;
+    while (!value.empty() && value.front() == '_') value.erase(value.begin());
+    while (!value.empty() && value.back() == '_') value.pop_back();
+    return value.empty() ? "unknown" : value;
 }
 
 

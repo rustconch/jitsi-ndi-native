@@ -850,15 +850,6 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
             ndiRouter_->handleParticipantUnavailableXml(xml);
         } else if (isPresence || contains(xml, "<message")) {
             ndiRouter_->updateSourcesFromJingleXml(xml);
-
-            // v46: rejoin/name-change recovery. Jitsi often announces a rejoined
-            // participant's new source ids first via presence <SourceInfo>, not only
-            // through Jingle source-add. Feed those source ids to the bridge receiver
-            // constraints too, otherwise the participant may be present in MUC but not
-            // forwarded by JVB/NDI after reconnect.
-            if (isPresence && contains(xml, "<SourceInfo")) {
-                answerer_.updateReceiverSourcesFromJingleXml(xml);
-            }
         }
     }
 
@@ -883,13 +874,7 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
         const std::string to = extractIqAttr(xml, "from");
         const std::string id = extractIqAttr(xml, "id");
 
-        Logger::info("MEDIA EVENT: Jingle source-add detected; ACKing first, then updating source map.");
-
-        // v48: ACK source-add immediately. Delaying the IQ result while we update
-        // local maps and bridge constraints can leave Jicofo/JVB in a half-updated
-        // state during participant rejoin. The local update is still done right
-        // after the ACK.
-        sendIqResult(to, id);
+        Logger::info("MEDIA EVENT: Jingle source-add detected; updating source map and ACKing.");
 
         if (ndiRouter_) {
             ndiRouter_->updateSourcesFromJingleXml(xml);
@@ -897,6 +882,7 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
 
         answerer_.updateReceiverSourcesFromJingleXml(xml);
 
+        sendIqResult(to, id);
         return;
     }
 

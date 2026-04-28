@@ -1,0 +1,18 @@
+--- /mnt/data/work/v45/src/JitsiSignaling.cpp	2026-04-28 11:24:25.614382825 +0000
++++ /mnt/data/work/v46/src/JitsiSignaling.cpp	2026-04-28 11:34:53.885803643 +0000
+@@ -850,6 +850,15 @@
+             ndiRouter_->handleParticipantUnavailableXml(xml);
+         } else if (isPresence || contains(xml, "<message")) {
+             ndiRouter_->updateSourcesFromJingleXml(xml);
++
++            // v46: rejoin/name-change recovery. Jitsi often announces a rejoined
++            // participant's new source ids first via presence <SourceInfo>, not only
++            // through Jingle source-add. Feed those source ids to the bridge receiver
++            // constraints too, otherwise the participant may be present in MUC but not
++            // forwarded by JVB/NDI after reconnect.
++            if (isPresence && contains(xml, "<SourceInfo")) {
++                answerer_.updateReceiverSourcesFromJingleXml(xml);
++            }
+         }
+     }
+ 
