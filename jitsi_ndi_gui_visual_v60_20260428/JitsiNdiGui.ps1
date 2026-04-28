@@ -1,4 +1,4 @@
-# Jitsi NDI Native GUI v61 - visual redesign only
+# Jitsi NDI Native GUI v60 - visual redesign only
 # ASCII-only PowerShell script to avoid codepage/parser issues.
 # Based on stable v59b detached launcher: no live native stdout reading, no NDI scanning.
 # Optional --nick remains exactly as in the working v59b flow.
@@ -51,12 +51,12 @@ function Load-CirceFont {
     try {
         $script:fontCollection = New-Object System.Drawing.Text.PrivateFontCollection
         $fontCandidates = @(
-            (Join-Path $script:repoRoot 'gui\Circe-ExtraBold.otf'),
-            (Join-Path $script:repoRoot 'gui\Circe-Bold.otf'),
             (Join-Path $script:repoRoot 'gui\Circe-Regular.otf'),
-            (Join-Path $script:repoRoot 'fonts\Circe-ExtraBold.otf'),
+            (Join-Path $script:repoRoot 'gui\Circe-Bold.otf'),
+            (Join-Path $script:repoRoot 'gui\Circe-ExtraBold.otf'),
+            (Join-Path $script:repoRoot 'fonts\Circe-Regular.otf'),
             (Join-Path $script:repoRoot 'fonts\Circe-Bold.otf'),
-            (Join-Path $script:repoRoot 'fonts\Circe-Regular.otf')
+            (Join-Path $script:repoRoot 'fonts\Circe-ExtraBold.otf')
         )
         foreach ($fp in $fontCandidates) {
             if (Test-Path $fp) {
@@ -198,7 +198,7 @@ function Set-RunningUi {
         } else {
             $lblStatus.Text = 'STOP'
             $lblStatus.BackColor = $C_Lav
-            $lblStatus.ForeColor = $C_Orange
+            $lblStatus.ForeColor = $C_Purple
             $lblStatusHint.Text = 'ready to connect'
         }
     } catch {}
@@ -215,7 +215,6 @@ function Stop-NativeProcess {
         }
     } catch {}
     Set-RunningUi $false
-Update-VisualLayout
 }
 
 # UI shell
@@ -224,8 +223,6 @@ $form.Text = 'Jitsi NDI'
 $form.Size = New-Object System.Drawing.Size(760, 600)
 $form.StartPosition = 'CenterScreen'
 $form.MinimumSize = New-Object System.Drawing.Size(740, 560)
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-$form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Show
 $form.Font = New-GuiFont 9.5
 $form.BackColor = $C_Mel
 
@@ -237,14 +234,14 @@ $form.Add_Paint({
         $e.Graphics.FillRectangle($b, $rect)
         $b.Dispose()
         $accentRect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, 150)
-        $b2 = New-Object System.Drawing.Drawing2D.LinearGradientBrush($accentRect, [System.Drawing.Color]::FromArgb(95, $C_Orange), [System.Drawing.Color]::FromArgb(45, $C_Purple), 0)
+        $b2 = New-Object System.Drawing.Drawing2D.LinearGradientBrush($accentRect, [System.Drawing.Color]::FromArgb(80, $C_Purple), [System.Drawing.Color]::FromArgb(35, $C_Orange), 0)
         $e.Graphics.FillRectangle($b2, $accentRect)
         $b2.Dispose()
     } catch {}
 })
 
 # Top title
-$lblLogo = New-Label 'Jitsi NDI' 0 26 760 70 33 $C_Orange ([System.Drawing.FontStyle]::Bold)
+$lblLogo = New-Label 'Jitsi NDI' 0 26 760 70 33 $C_Purple ([System.Drawing.FontStyle]::Bold)
 $lblLogo.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $form.Controls.Add($lblLogo)
 
@@ -281,7 +278,7 @@ $txtRoom.Size = New-Object System.Drawing.Size(370, 28)
 $txtRoom.Font = New-GuiFont 10
 $txtRoom.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
 $txtRoom.BackColor = [System.Drawing.Color]::White
-$txtRoom.Text = ''
+$txtRoom.Text = 'https://meet.jit.si/6767676766767penxyi'
 $card.Controls.Add($txtRoom)
 
 $lblParsed = New-Label 'Room:' 170 61 370 20 8.8 $C_TextSoft
@@ -296,7 +293,7 @@ $txtNick.Size = New-Object System.Drawing.Size(370, 28)
 $txtNick.Font = New-GuiFont 10
 $txtNick.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
 $txtNick.BackColor = [System.Drawing.Color]::White
-$txtNick.Text = 'STREAM'
+$txtNick.Text = ''
 $card.Controls.Add($txtNick)
 
 $chkNick = New-Object System.Windows.Forms.CheckBox
@@ -399,41 +396,6 @@ $txtLog.BackColor = $C_Mel
 $txtLog.ForeColor = $C_TextSoft
 $txtLog.Font = New-GuiFont 8.5
 $form.Controls.Add($txtLog)
-
-function Update-VisualLayout {
-    try {
-        $w = [int]$form.ClientSize.Width
-        if ($w -lt 740) { $w = 740 }
-        $lblLogo.Width = $w
-        $lblSub.Width = $w
-        $cardW = [Math]::Min(680, [Math]::Max(596, $w - 96))
-        $card.Left = [int](($w - $cardW) / 2)
-        $card.Width = $cardW
-        $fieldW = [Math]::Max(260, $card.Width - 226)
-        $txtRoom.Width = $fieldW
-        $lblParsed.Width = $fieldW
-        $txtNick.Width = $fieldW
-        $chkNick.Width = $fieldW
-        $lblNickNote.Width = $fieldW
-        $statusBox.Width = $card.Width - 72
-        $lblStatusHint.Width = [Math]::Max(120, $statusBox.Width - 266)
-        $footer.Top = $form.ClientSize.Height - 122
-        $footer.Width = $form.ClientSize.Width
-        $right = $form.ClientSize.Width - 24
-        $btnLogs.Left = $right - $btnLogs.Width
-        $btnOpenLog.Left = $btnLogs.Left - 10 - $btnOpenLog.Width
-        $btnCopy.Left = $btnOpenLog.Left - 10 - $btnCopy.Width
-        $btnExe.Left = $btnCopy.Left - 10 - $btnExe.Width
-        $lblFooter.Width = $form.ClientSize.Width - 48
-        $txtLog.Left = $card.Left
-        $txtLog.Width = $card.Width
-        $txtLog.Top = $footer.Top - 20
-        $form.Invalidate()
-        $card.Invalidate()
-    } catch {}
-}
-
-$form.Add_Resize({ Update-VisualLayout })
 
 $txtRoom.Add_TextChanged({
     try {
@@ -540,7 +502,6 @@ $btnStart.Add_Click({
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
-Update-VisualLayout
     }
 })
 
@@ -555,7 +516,6 @@ $timer.Add_Tick({
                 if (-not $script:isStopping) { Append-Log "[GUI] Native exited with code $($script:proc.ExitCode)." }
                 $script:proc = $null
                 Set-RunningUi $false
-Update-VisualLayout
             } else {
                 if ($script:nativeStartedAt) {
                     $elapsed = [int]((Get-Date) - $script:nativeStartedAt).TotalSeconds
@@ -593,7 +553,6 @@ $form.Add_FormClosing({
 })
 
 Set-RunningUi $false
-Update-VisualLayout
-Append-Log '[GUI] v61 visual redesign loaded. Functional logic is unchanged from working v59b.'
+Append-Log '[GUI] v60 visual redesign loaded. Functional logic is unchanged from working v59b.'
 if ($script:fontFamily) { Append-Log '[GUI] Circe font loaded from local gui/fonts folder.' } else { Append-Log '[GUI] Circe font not found locally; Windows font fallback is active.' }
 [void]$form.ShowDialog()

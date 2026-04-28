@@ -154,12 +154,7 @@ std::string JitsiSignaling::bareMucJid() const {
 }
 
 std::string JitsiSignaling::mucJid() const {
-    // v59 nickname fix:
-    // Keep the MUC occupant resource stable and ASCII-safe. Jitsi uses this
-    // resource as the technical endpoint id/source owner. Passing a display
-    // name with spaces or non-ASCII characters here can break media routing.
-    // The user-facing name is still sent below in <nick>.
-    return bareMucJid() + "/probe123";
+    return bareMucJid() + "/" + cfg_.nick;
 }
 
 std::string JitsiSignaling::focusJid() const {
@@ -337,10 +332,7 @@ void JitsiSignaling::sendConferenceRequest() {
 }
 
 void JitsiSignaling::joinMuc() {
-    const std::string displayNick = cfg_.nick.empty() ? "probe123" : cfg_.nick;
-
-    Logger::info("Joining MUC room as technical endpoint: ", mucJid());
-    Logger::info("Jitsi display nick: ", displayNick);
+    Logger::info("Joining MUC room as: ", mucJid());
 
     std::ostringstream xml;
     xml
@@ -351,7 +343,7 @@ void JitsiSignaling::joinMuc() {
 
     xml
         << "<nick xmlns='http://jabber.org/protocol/nick'>"
-        << xmlEscape(displayNick)
+        << xmlEscape(cfg_.nick)
         << "</nick>";
 
     xml

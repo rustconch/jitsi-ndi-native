@@ -6,16 +6,7 @@
 #include <chrono>
 #include <csignal>
 #include <exception>
-#include <string>
 #include <thread>
-#include <vector>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -23,45 +14,9 @@ std::atomic<bool> g_running{true};
 void handleSignal(int) {
     g_running = false;
 }
+} // namespace
 
-#ifdef _WIN32
-std::string wideToUtf8(const wchar_t* value) {
-    if (!value) {
-        return {};
-    }
-
-    const int needed = WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        value,
-        -1,
-        nullptr,
-        0,
-        nullptr,
-        nullptr
-    );
-
-    if (needed <= 1) {
-        return {};
-    }
-
-    std::string out(static_cast<std::size_t>(needed - 1), '\0');
-    WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        value,
-        -1,
-        out.data(),
-        needed,
-        nullptr,
-        nullptr
-    );
-
-    return out;
-}
-#endif
-
-int runApp(int argc, char** argv) {
+int main(int argc, char** argv) {
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
@@ -72,7 +27,6 @@ int runApp(int argc, char** argv) {
         Logger::info("Room: ", cfg.room);
         Logger::info("Participant filter: ", cfg.participantFilter.empty() ? "<none>" : cfg.participantFilter);
         Logger::info("NDI base source name: ", cfg.ndiName);
-        Logger::info("Display nick: ", cfg.nick);
 
         JitsiSignalingConfig signalingConfig;
         signalingConfig.room = cfg.room;
@@ -123,27 +77,3 @@ int runApp(int argc, char** argv) {
         return 99;
     }
 }
-} // namespace
-
-#ifdef _WIN32
-int wmain(int argc, wchar_t** wargv) {
-    std::vector<std::string> utf8Args;
-    utf8Args.reserve(static_cast<std::size_t>(argc));
-
-    for (int i = 0; i < argc; ++i) {
-        utf8Args.push_back(wideToUtf8(wargv[i]));
-    }
-
-    std::vector<char*> argv;
-    argv.reserve(utf8Args.size());
-    for (std::string& arg : utf8Args) {
-        argv.push_back(arg.data());
-    }
-
-    return runApp(argc, argv.data());
-}
-#else
-int main(int argc, char** argv) {
-    return runApp(argc, argv);
-}
-#endif
