@@ -102,28 +102,6 @@ std::string endpointFromSourceName(const std::string& rawName) {
 bool isFallbackSsrcEndpoint(const std::string& endpointId) {
     return startsWith(endpointId, "ssrc-");
 }
-
-bool looksLikeJitsiSourceName(const std::string& value) {
-    if (value.empty()) {
-        return false;
-    }
-
-    std::string lower = value;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-
-    if (lower == "muted" || lower == "videotype" || lower == "owner" || lower == "msid") {
-        return false;
-    }
-
-    static const std::regex sourceNameRe(
-        R"(^[^\"{}:]+[-_](?:a|v|d|audio|video|camera|desktop|screen)\d+$)",
-        std::regex::icase
-    );
-
-    return std::regex_match(value, sourceNameRe);
-}
 std::string tagText(const std::string& xml, const std::string& name) {
     const std::regex re("<" + name + R"((?:\s[^>]*)?>([\s\S]*?)</)" + name + R"(>)", std::regex::icase);
     std::smatch m;
@@ -152,14 +130,7 @@ std::vector<std::string> sourceNamesFromSourceInfo(const std::string& xml) {
          it != std::sregex_iterator();
          ++it) {
         if ((*it).size() > 1) {
-            const std::string key = (*it)[1].str();
-            // SourceInfo is JSON-like: top-level keys are source names, while nested
-            // keys such as "muted" and "videoType" are metadata. Do not treat nested
-            // metadata keys as endpoints, otherwise rejoin/name-change cleanup can
-            // recycle bogus endpoints like "muted" and break NDI routing.
-            if (looksLikeJitsiSourceName(key)) {
-                out.push_back(key);
-            }
+            out.push_back((*it)[1].str());
         }
     }
 

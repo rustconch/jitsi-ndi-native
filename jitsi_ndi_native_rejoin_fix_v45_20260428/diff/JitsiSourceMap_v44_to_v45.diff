@@ -1,0 +1,47 @@
+--- /mnt/data/work/v44/jitsi_ndi_native_rejoin_lifecycle_v44_20260428/src/JitsiSourceMap.cpp	2026-04-28 09:55:18.000000000 +0000
++++ /mnt/data/work/v45/src/JitsiSourceMap.cpp	2026-04-28 11:24:25.612303106 +0000
+@@ -102,6 +102,28 @@
+ bool isFallbackSsrcEndpoint(const std::string& endpointId) {
+     return startsWith(endpointId, "ssrc-");
+ }
++
++bool looksLikeJitsiSourceName(const std::string& value) {
++    if (value.empty()) {
++        return false;
++    }
++
++    std::string lower = value;
++    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
++        return static_cast<char>(std::tolower(c));
++    });
++
++    if (lower == "muted" || lower == "videotype" || lower == "owner" || lower == "msid") {
++        return false;
++    }
++
++    static const std::regex sourceNameRe(
++        R"(^[^\"{}:]+[-_](?:a|v|d|audio|video|camera|desktop|screen)\d+$)",
++        std::regex::icase
++    );
++
++    return std::regex_match(value, sourceNameRe);
++}
+ std::string tagText(const std::string& xml, const std::string& name) {
+     const std::regex re("<" + name + R"((?:\s[^>]*)?>([\s\S]*?)</)" + name + R"(>)", std::regex::icase);
+     std::smatch m;
+@@ -130,7 +152,14 @@
+          it != std::sregex_iterator();
+          ++it) {
+         if ((*it).size() > 1) {
+-            out.push_back((*it)[1].str());
++            const std::string key = (*it)[1].str();
++            // SourceInfo is JSON-like: top-level keys are source names, while nested
++            // keys such as "muted" and "videoType" are metadata. Do not treat nested
++            // metadata keys as endpoints, otherwise rejoin/name-change cleanup can
++            // recycle bogus endpoints like "muted" and break NDI routing.
++            if (looksLikeJitsiSourceName(key)) {
++                out.push_back(key);
++            }
+         }
+     }
+ 

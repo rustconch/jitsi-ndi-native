@@ -656,44 +656,7 @@ void JitsiSignaling::handleJingleTerminate(const std::string& xml) {
     const std::string from = xmlUnescape(attrValue(iqTag, "from"));
     const std::string id = attrValue(iqTag, "id");
 
-    const std::string jingleTag = findFirstTag(xml, "jingle");
-    const std::string sid = xmlUnescape(attrValue(jingleTag, "sid"));
-
-    std::string activeFocusJid;
-    std::string activeSid;
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        activeFocusJid = currentFocusJid_;
-        activeSid = currentSid_;
-    }
-
-    const bool isFromFocus = activeFocusJid.empty()
-        ? (from.find("/focus") != std::string::npos || from.find("focus") != std::string::npos)
-        : (from == activeFocusJid);
-    const bool sidMatches = activeSid.empty() || sid.empty() || sid == activeSid;
-
-    if (!isFromFocus || !sidMatches) {
-        Logger::warn(
-            "MEDIA EVENT: ignoring non-active/P2P session-terminate from=",
-            from.empty() ? "?" : from,
-            " sid=",
-            sid.empty() ? "?" : sid,
-            " activeFocus=",
-            activeFocusJid.empty() ? "?" : activeFocusJid,
-            " activeSid=",
-            activeSid.empty() ? "?" : activeSid
-        );
-        sendIqResult(from, id);
-        return;
-    }
-
-    Logger::warn(
-        "MEDIA EVENT: active focus Jingle session-terminate detected from=",
-        from,
-        " sid=",
-        sid.empty() ? "?" : sid
-    );
+    Logger::warn("MEDIA EVENT: Jingle session-terminate detected");
 
     if (ndiRouter_) {
         ndiRouter_->removeSourcesFromJingleXml(xml);
