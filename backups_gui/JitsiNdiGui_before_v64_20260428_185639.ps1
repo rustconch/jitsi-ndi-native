@@ -1,4 +1,4 @@
-# Jitsi NDI Native GUI v64 - visual only with speaker quality link generator
+# Jitsi NDI Native GUI v63 - visual only with speaker link generator
 # ASCII-only PowerShell script to avoid codepage/parser issues.
 # Based on stable v59b detached launcher: no live native stdout reading, no NDI scanning.
 # Optional --nick remains exactly as in the working v59b flow.
@@ -120,41 +120,17 @@ function Get-JitsiBaseFromInput {
     return ('https://meet.jit.si/' + $encodedRoom)
 }
 
-function Get-SpeakerQualityProfile {
-    param([string]$QualityText)
-    $q = ("$QualityText").Trim().ToLowerInvariant()
-    switch ($q) {
-        '480p' { return @{ Height = 480; Width = 854; Label = '480p' } }
-        '540p' { return @{ Height = 540; Width = 960; Label = '540p' } }
-        '720p' { return @{ Height = 720; Width = 1280; Label = '720p' } }
-        default { return @{ Height = 1080; Width = 1920; Label = '1080p' } }
-    }
-}
-
-function Get-SelectedSpeakerQuality {
-    try {
-        if ($script:cmbSpeakerQuality -and -not $script:cmbSpeakerQuality.IsDisposed -and $script:cmbSpeakerQuality.SelectedItem) {
-            return [string]$script:cmbSpeakerQuality.SelectedItem
-        }
-    } catch {}
-    return '1080p'
-}
-
 function Build-SpeakerLink {
     param([string]$InputText)
     $room = Convert-JitsiInputToRoom $InputText
     if ([string]::IsNullOrWhiteSpace($room)) { return '' }
     $base = Get-JitsiBaseFromInput $InputText $room
-    $profile = Get-SpeakerQualityProfile (Get-SelectedSpeakerQuality)
-    $h = [int]$profile.Height
-    $w = [int]$profile.Width
     $params = @(
-        "config.resolution=$h",
-        "config.constraints.video.height.ideal=$h",
-        "config.constraints.video.height.max=$h",
-        "config.constraints.video.width.ideal=$w",
-        "config.constraints.video.width.max=$w",
-        'config.constraints.video.frameRate.ideal=30',
+        'config.resolution=1080',
+        'config.constraints.video.height.ideal=1080',
+        'config.constraints.video.height.max=1080',
+        'config.constraints.video.width.ideal=1920',
+        'config.constraints.video.width.max=1920',
         'config.constraints.video.frameRate.max=30',
         'config.maxFullResolutionParticipants=10',
         'config.videoQuality.enableAdaptiveMode=false',
@@ -369,24 +345,9 @@ $txtSpeakerLink.BackColor = [System.Drawing.Color]::White
 $txtSpeakerLink.ReadOnly = $true
 $card.Controls.Add($txtSpeakerLink)
 
-$cmbSpeakerQuality = New-Object System.Windows.Forms.ComboBox
-$script:cmbSpeakerQuality = $cmbSpeakerQuality
-$cmbSpeakerQuality.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-[void]$cmbSpeakerQuality.Items.Add('480p')
-[void]$cmbSpeakerQuality.Items.Add('540p')
-[void]$cmbSpeakerQuality.Items.Add('720p')
-[void]$cmbSpeakerQuality.Items.Add('1080p')
-$cmbSpeakerQuality.SelectedItem = '1080p'
-$cmbSpeakerQuality.Location = New-Object System.Drawing.Point(468, 89)
-$cmbSpeakerQuality.Size = New-Object System.Drawing.Size(78, 28)
-$cmbSpeakerQuality.Font = New-GuiFont 9
-$cmbSpeakerQuality.BackColor = [System.Drawing.Color]::White
-$cmbSpeakerQuality.ForeColor = $C_Asphalt
-$card.Controls.Add($cmbSpeakerQuality)
-
 $btnCopySpeaker = New-Object System.Windows.Forms.Button
 $btnCopySpeaker.Text = 'Copy'
-$btnCopySpeaker.Location = New-Object System.Drawing.Point(552, 87)
+$btnCopySpeaker.Location = New-Object System.Drawing.Point(472, 87)
 $btnCopySpeaker.Size = New-Object System.Drawing.Size(68, 31)
 Set-ButtonStyle $btnCopySpeaker $C_Orange $C_Asphalt
 $card.Controls.Add($btnCopySpeaker)
@@ -503,12 +464,9 @@ function Update-VisualLayout {
         $txtRoom.Width = $fieldW
         $lblParsed.Width = $fieldW
         $copyW = 68
-        $qualityW = 78
         $gap = 10
-        $txtSpeakerLink.Width = [Math]::Max(150, $fieldW - $qualityW - $copyW - ($gap * 2))
-        $cmbSpeakerQuality.Left = 170 + $txtSpeakerLink.Width + $gap
-        $cmbSpeakerQuality.Width = $qualityW
-        $btnCopySpeaker.Left = $cmbSpeakerQuality.Left + $qualityW + $gap
+        $txtSpeakerLink.Width = [Math]::Max(180, $fieldW - $copyW - $gap)
+        $btnCopySpeaker.Left = 170 + $txtSpeakerLink.Width + $gap
         $txtNick.Width = $fieldW
         $chkNick.Width = $fieldW
         $lblNickNote.Width = $fieldW
@@ -529,8 +487,6 @@ function Update-VisualLayout {
 
 $form.Add_Resize({ Update-VisualLayout })
 
-$cmbSpeakerQuality.Add_SelectedIndexChanged({ Update-SpeakerLink })
-
 $txtRoom.Add_TextChanged({
     try {
         $room = Convert-JitsiInputToRoom $txtRoom.Text
@@ -549,7 +505,7 @@ $btnCopySpeaker.Add_Click({
             return
         }
         [System.Windows.Forms.Clipboard]::SetText($link)
-        Append-Log ("[GUI] Speaker link copied. Quality=" + (Get-SelectedSpeakerQuality))
+        Append-Log '[GUI] Speaker link copied.'
     } catch { Append-Log "[GUI] Copy speaker link failed: $($_.Exception.Message)" }
 })
 
