@@ -484,26 +484,25 @@ std::string makeReceiverVideoConstraintsMessage(
     int maxHeight
 ) {
     /*
-        v42 selected-only stable quality mode:
-        - Every real source is selected, which moves all requested speakers up in JVB allocation.
-        - onStageSources is intentionally empty. Putting every camera and desktop-share on stage
-          can over-prioritize too many streams at once and destabilize the bridge/datachannel.
+        All-on-stage maximum quality mode:
+        - Every real source is selected, which moves all requested speakers to the top of JVB allocation.
+        - Every real source is also on-stage. JVB explicitly prioritizes on-stage sources up to higher resolution;
+          selectedSources alone mostly affects ordering and may still leave some cameras at a lower layer.
         - lastN=-1 asks the bridge not to cap the number of forwarded video sources on the receiver side.
-        - defaultConstraints stays high so newly added real sources are not immediately capped low.
+        - defaultConstraints stays very high so newly added real sources are not immediately capped low. This cannot create pixels the sender does not publish, but it asks JVB for the highest available layer.
     */
     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
     const int lastN = -1;
-    const std::vector<std::string> emptyOnStageSources;
 
     std::ostringstream out;
 
     out << "{";
     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
     out << "\"lastN\":" << lastN << ",";
-    out << "\"assumedBandwidthBps\":250000000,";
+    out << "\"assumedBandwidthBps\":1000000000,";
     out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
-    out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
-    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
+    out << "\"onStageSources\":" << jsonStringArray(realSources) << ",";
+    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":60.0},";
     out << "\"constraints\":{";
 
     for (std::size_t i = 0; i < realSources.size(); ++i) {
@@ -516,7 +515,7 @@ std::string makeReceiverVideoConstraintsMessage(
             << escapeJsonString(realSources[i])
             << "\":{\"maxHeight\":"
             << maxHeight
-            << ",\"maxFrameRate\":30.0}";
+            << ",\"maxFrameRate\":60.0}";
     }
 
     out << "}";
@@ -544,7 +543,7 @@ void sendReceiverVideoConstraints(
 
     if (realSources.empty()) {
         Logger::warn(
-            "NativeWebRTCAnswerer: equal 1080p constraints skipped because real video sources list is empty, reason=",
+            "NativeWebRTCAnswerer: max-quality constraints skipped because real video sources list is empty, reason=",
             reason
         );
         return;
@@ -553,7 +552,7 @@ void sendReceiverVideoConstraints(
     sendLastNUnlimited(channel, reason);
 
     Logger::info(
-        "NativeWebRTCAnswerer: requesting v42 stable selected-only 1080p/30fps constraints, realSources=",
+        "NativeWebRTCAnswerer: requesting all-on-stage MAX 2160p/60fps constraints, realSources=",
         realSources.size(),
         " reason=",
         reason
@@ -561,8 +560,8 @@ void sendReceiverVideoConstraints(
 
     sendBridgeMessage(
         channel,
-        makeReceiverVideoConstraintsMessage(realSources, 1080),
-        "ReceiverVideoConstraints/v42-stable-selected-only-1080p30/" + reason
+        makeReceiverVideoConstraintsMessage(realSources, 2160),
+        "ReceiverVideoConstraints/all-on-stage-2160p60/" + reason
     );
 }
 void sendReceiverAudioSubscriptionAll(
@@ -612,8 +611,12 @@ void scheduleRepeatedVideoConstraintRefresh(
 
     std::thread([channel, sourcesMutex, latestSources, fallbackSources]() {
         const int delaysMs[] = {
+            750,
+            1500,
             3000,
+            6000,
             10000,
+            15000,
             30000,
             60000
         };
@@ -850,10 +853,14 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                 "open-sdp-sources"
             );
 
-            // v41: do not run repeated refresh loops.
-            // The one-shot open/server-hello/ForwardedSources constraints are enough for JVB,
-            // while repeated sends after DataChannel close caused noisy warnings and could destabilize long sessions.
-            Logger::info("NativeWebRTCAnswerer: v42 stable selected-only quality mode; all-on-stage disabled; repeated bridge refresh loops disabled");
+            scheduleRepeatedVideoConstraintRefresh(
+                bridgeChannel,
+                latestForwardedSourcesMutex,
+                latestForwardedSources,
+                initialVideoSources
+            );
+
+            scheduleRepeatedAudioSubscriptionRefresh(bridgeChannel);
         });
 
         bridgeChannel->onClosed([]() {
@@ -919,7 +926,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                     Logger::info(
                         "NativeWebRTCAnswerer: VideoSourcesMap parsed count=",
                         sources.size(),
-                        "; sending selected-only all-source constraints"
+                        "; sending all-source all-on-stage constraints"
                     );
 
                     sendReceiverVideoConstraints(

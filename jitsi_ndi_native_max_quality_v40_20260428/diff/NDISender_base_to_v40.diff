@@ -1,0 +1,124 @@
+--- /mnt/data/src_extract/jitsi-ndi-native-main/src/NDISender.cpp	2026-04-27 21:15:48.000000000 +0000
++++ /mnt/data/patch_v40/jitsi_ndi_native_max_quality_v40_20260428/src/NDISender.cpp	2026-04-28 08:51:52.414372041 +0000
+@@ -1,13 +1,70 @@
+-﻿#include "NDISender.h"
++#include "NDISender.h"
+ 
+ #include "Logger.h"
+ 
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <cstddef>
++#include <cstring>
+ #include <utility>
+ 
+ #if JNN_HAS_NDI
+ #include <Processing.NDI.Lib.h>
+ #endif
+ 
++namespace {
++
++constexpr int kNdiMinimumCanvasWidth = 1920;
++constexpr int kNdiMinimumCanvasHeight = 1080;
++
++bool shouldUpscaleToMinimumNdiCanvas(const DecodedVideoFrameBGRA& frame) {
++    if (frame.width <= 0 || frame.height <= 0 || frame.stride <= 0 || frame.bgra.empty()) {
++        return false;
++    }
++
++    // Never downscale. If the incoming decoded frame is already Full HD or larger
++    // in either dimension, keep the original resolution exactly as received.
++    return frame.width < kNdiMinimumCanvasWidth && frame.height < kNdiMinimumCanvasHeight;
++}
++
++DecodedVideoFrameBGRA upscaleToMinimumNdiCanvas(const DecodedVideoFrameBGRA& frame) {
++    DecodedVideoFrameBGRA out;
++    out.width = kNdiMinimumCanvasWidth;
++    out.height = kNdiMinimumCanvasHeight;
++    out.stride = out.width * 4;
++    out.pts90k = frame.pts90k;
++    out.bgra.assign(static_cast<std::size_t>(out.stride) * static_cast<std::size_t>(out.height), 0);
++
++    const double scaleX = static_cast<double>(out.width) / static_cast<double>(frame.width);
++    const double scaleY = static_cast<double>(out.height) / static_cast<double>(frame.height);
++    const double scale = std::min(scaleX, scaleY);
++
++    const int scaledW = std::max(1, static_cast<int>(std::round(static_cast<double>(frame.width) * scale)));
++    const int scaledH = std::max(1, static_cast<int>(std::round(static_cast<double>(frame.height) * scale)));
++    const int offsetX = std::max(0, (out.width - scaledW) / 2);
++    const int offsetY = std::max(0, (out.height - scaledH) / 2);
++
++    for (int y = 0; y < scaledH; ++y) {
++        const int srcY = std::min(frame.height - 1, (y * frame.height) / scaledH);
++        const auto* srcRow = frame.bgra.data() + static_cast<std::size_t>(srcY) * static_cast<std::size_t>(frame.stride);
++        auto* dstRow = out.bgra.data()
++            + static_cast<std::size_t>(offsetY + y) * static_cast<std::size_t>(out.stride)
++            + static_cast<std::size_t>(offsetX) * 4u;
++
++        for (int x = 0; x < scaledW; ++x) {
++            const int srcX = std::min(frame.width - 1, (x * frame.width) / scaledW);
++            const auto* srcPx = srcRow + static_cast<std::size_t>(srcX) * 4u;
++            auto* dstPx = dstRow + static_cast<std::size_t>(x) * 4u;
++            std::memcpy(dstPx, srcPx, 4u);
++        }
++    }
++
++    return out;
++}
++
++} // namespace
++
+ NDISender::NDISender(std::string sourceName) : sourceName_(std::move(sourceName)) {}
+ 
+ NDISender::~NDISender() {
+@@ -103,24 +160,42 @@
+     if (!started_) return false;
+     if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) return false;
+ 
++    DecodedVideoFrameBGRA upscaled;
++    const DecodedVideoFrameBGRA* sendFrame = &frame;
++    bool upscaledForNdi = false;
++
++    if (shouldUpscaleToMinimumNdiCanvas(frame)) {
++        upscaled = upscaleToMinimumNdiCanvas(frame);
++        sendFrame = &upscaled;
++        upscaledForNdi = true;
++    }
++
+ #if JNN_HAS_NDI
+     NDIlib_video_frame_v2_t video{};
+-    video.xres = frame.width;
+-    video.yres = frame.height;
++    video.xres = sendFrame->width;
++    video.yres = sendFrame->height;
+     video.FourCC = NDIlib_FourCC_type_BGRA;
+     video.frame_rate_N = fpsNum;
+     video.frame_rate_D = fpsDen <= 0 ? 1 : fpsDen;
+-    video.picture_aspect_ratio = static_cast<float>(frame.width) / static_cast<float>(frame.height);
++    video.picture_aspect_ratio = static_cast<float>(sendFrame->width) / static_cast<float>(sendFrame->height);
+     video.frame_format_type = NDIlib_frame_format_type_progressive;
+-    video.p_data = const_cast<std::uint8_t*>(frame.bgra.data());
+-    video.line_stride_in_bytes = frame.stride;
++    video.p_data = const_cast<std::uint8_t*>(sendFrame->bgra.data());
++    video.line_stride_in_bytes = sendFrame->stride;
+     NDIlib_send_send_video_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &video);
+     if ((sentFrames_ % 300) == 0) {
+-        Logger::info("NDI video frame sent: ", sourceName_, " ", frame.width, "x", frame.height);
++        if (upscaledForNdi) {
++            Logger::info("NDI video frame sent: ", sourceName_, " ", sendFrame->width, "x", sendFrame->height, " upscaled-from=", frame.width, "x", frame.height);
++        } else {
++            Logger::info("NDI video frame sent: ", sourceName_, " ", sendFrame->width, "x", sendFrame->height);
++        }
+     }
+ #else
+     if ((sentFrames_ % 300) == 0) {
+-        Logger::info("Mock NDI decoded video ", sentFrames_, " ", sourceName_, " ", frame.width, "x", frame.height);
++        if (upscaledForNdi) {
++            Logger::info("Mock NDI decoded video ", sentFrames_, " ", sourceName_, " ", sendFrame->width, "x", sendFrame->height, " upscaled-from=", frame.width, "x", frame.height);
++        } else {
++            Logger::info("Mock NDI decoded video ", sentFrames_, " ", sourceName_, " ", sendFrame->width, "x", sendFrame->height);
++        }
+     }
+ #endif
+ 

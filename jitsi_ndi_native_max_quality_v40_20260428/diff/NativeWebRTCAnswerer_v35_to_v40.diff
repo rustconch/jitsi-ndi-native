@@ -1,0 +1,81 @@
+--- /mnt/data/v35_extract/jitsi_ndi_native_onstage_all_quality_v35_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-27 22:46:54.000000000 +0000
++++ /mnt/data/patch_v40/jitsi_ndi_native_max_quality_v40_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 08:51:52.387041661 +0000
+@@ -484,12 +484,12 @@
+     int maxHeight
+ ) {
+     /*
+-        All-on-stage quality mode:
++        All-on-stage maximum quality mode:
+         - Every real source is selected, which moves all requested speakers to the top of JVB allocation.
+         - Every real source is also on-stage. JVB explicitly prioritizes on-stage sources up to higher resolution;
+           selectedSources alone mostly affects ordering and may still leave some cameras at a lower layer.
+         - lastN=-1 asks the bridge not to cap the number of forwarded video sources on the receiver side.
+-        - defaultConstraints stays high so newly added real sources are not immediately capped low.
++        - defaultConstraints stays very high so newly added real sources are not immediately capped low. This cannot create pixels the sender does not publish, but it asks JVB for the highest available layer.
+     */
+     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
+     const int lastN = -1;
+@@ -499,10 +499,10 @@
+     out << "{";
+     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
+     out << "\"lastN\":" << lastN << ",";
+-    out << "\"assumedBandwidthBps\":250000000,";
++    out << "\"assumedBandwidthBps\":1000000000,";
+     out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
+     out << "\"onStageSources\":" << jsonStringArray(realSources) << ",";
+-    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
++    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":60.0},";
+     out << "\"constraints\":{";
+ 
+     for (std::size_t i = 0; i < realSources.size(); ++i) {
+@@ -515,7 +515,7 @@
+             << escapeJsonString(realSources[i])
+             << "\":{\"maxHeight\":"
+             << maxHeight
+-            << ",\"maxFrameRate\":30.0}";
++            << ",\"maxFrameRate\":60.0}";
+     }
+ 
+     out << "}";
+@@ -543,7 +543,7 @@
+ 
+     if (realSources.empty()) {
+         Logger::warn(
+-            "NativeWebRTCAnswerer: equal 1080p constraints skipped because real video sources list is empty, reason=",
++            "NativeWebRTCAnswerer: max-quality constraints skipped because real video sources list is empty, reason=",
+             reason
+         );
+         return;
+@@ -552,7 +552,7 @@
+     sendLastNUnlimited(channel, reason);
+ 
+     Logger::info(
+-        "NativeWebRTCAnswerer: requesting all-on-stage 1080p/30fps constraints, realSources=",
++        "NativeWebRTCAnswerer: requesting all-on-stage MAX 2160p/60fps constraints, realSources=",
+         realSources.size(),
+         " reason=",
+         reason
+@@ -560,8 +560,8 @@
+ 
+     sendBridgeMessage(
+         channel,
+-        makeReceiverVideoConstraintsMessage(realSources, 1080),
+-        "ReceiverVideoConstraints/all-on-stage-1080p/" + reason
++        makeReceiverVideoConstraintsMessage(realSources, 2160),
++        "ReceiverVideoConstraints/all-on-stage-2160p60/" + reason
+     );
+ }
+ void sendReceiverAudioSubscriptionAll(
+@@ -611,8 +611,12 @@
+ 
+     std::thread([channel, sourcesMutex, latestSources, fallbackSources]() {
+         const int delaysMs[] = {
++            750,
++            1500,
+             3000,
++            6000,
+             10000,
++            15000,
+             30000,
+             60000
+         };

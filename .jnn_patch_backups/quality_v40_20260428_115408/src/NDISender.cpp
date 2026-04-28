@@ -1,4 +1,4 @@
-#include "NDISender.h"
+﻿#include "NDISender.h"
 
 #include "Logger.h"
 

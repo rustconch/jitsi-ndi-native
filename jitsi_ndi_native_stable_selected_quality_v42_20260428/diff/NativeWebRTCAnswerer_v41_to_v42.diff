@@ -1,0 +1,68 @@
+--- /mnt/data/jitsi_ndi_native_stable_quality_v41_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 09:02:17.488687106 +0000
++++ /mnt/data/jitsi_ndi_native_stable_selected_quality_v42_20260428/src/NativeWebRTCAnswerer.cpp	2026-04-28 09:12:55.302892716 +0000
+@@ -484,15 +484,16 @@
+     int maxHeight
+ ) {
+     /*
+-        All-on-stage quality mode:
+-        - Every real source is selected, which moves all requested speakers to the top of JVB allocation.
+-        - Every real source is also on-stage. JVB explicitly prioritizes on-stage sources up to higher resolution;
+-          selectedSources alone mostly affects ordering and may still leave some cameras at a lower layer.
++        v42 selected-only stable quality mode:
++        - Every real source is selected, which moves all requested speakers up in JVB allocation.
++        - onStageSources is intentionally empty. Putting every camera and desktop-share on stage
++          can over-prioritize too many streams at once and destabilize the bridge/datachannel.
+         - lastN=-1 asks the bridge not to cap the number of forwarded video sources on the receiver side.
+         - defaultConstraints stays high so newly added real sources are not immediately capped low.
+     */
+     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
+     const int lastN = -1;
++    const std::vector<std::string> emptyOnStageSources;
+ 
+     std::ostringstream out;
+ 
+@@ -501,7 +502,7 @@
+     out << "\"lastN\":" << lastN << ",";
+     out << "\"assumedBandwidthBps\":250000000,";
+     out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
+-    out << "\"onStageSources\":" << jsonStringArray(realSources) << ",";
++    out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
+     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
+     out << "\"constraints\":{";
+ 
+@@ -552,7 +553,7 @@
+     sendLastNUnlimited(channel, reason);
+ 
+     Logger::info(
+-        "NativeWebRTCAnswerer: requesting v41 stable all-on-stage 1080p/30fps constraints, realSources=",
++        "NativeWebRTCAnswerer: requesting v42 stable selected-only 1080p/30fps constraints, realSources=",
+         realSources.size(),
+         " reason=",
+         reason
+@@ -561,7 +562,7 @@
+     sendBridgeMessage(
+         channel,
+         makeReceiverVideoConstraintsMessage(realSources, 1080),
+-        "ReceiverVideoConstraints/v41-stable-all-on-stage-1080p30/" + reason
++        "ReceiverVideoConstraints/v42-stable-selected-only-1080p30/" + reason
+     );
+ }
+ void sendReceiverAudioSubscriptionAll(
+@@ -852,7 +853,7 @@
+             // v41: do not run repeated refresh loops.
+             // The one-shot open/server-hello/ForwardedSources constraints are enough for JVB,
+             // while repeated sends after DataChannel close caused noisy warnings and could destabilize long sessions.
+-            Logger::info("NativeWebRTCAnswerer: v41 stable quality mode; repeated bridge refresh loops disabled");
++            Logger::info("NativeWebRTCAnswerer: v42 stable selected-only quality mode; all-on-stage disabled; repeated bridge refresh loops disabled");
+         });
+ 
+         bridgeChannel->onClosed([]() {
+@@ -918,7 +919,7 @@
+                     Logger::info(
+                         "NativeWebRTCAnswerer: VideoSourcesMap parsed count=",
+                         sources.size(),
+-                        "; sending all-source all-on-stage constraints"
++                        "; sending selected-only all-source constraints"
+                     );
+ 
+                     sendReceiverVideoConstraints(
