@@ -1,4 +1,4 @@
-﻿# Jitsi NDI Native - safe visual monitoring GUI launcher v39
+﻿﻿# Jitsi NDI Native - safe visual monitoring GUI launcher
 # Place this file in D:\MEDIA\Desktop\jitsi-ndi-native and run:
 # powershell -ExecutionPolicy Bypass -File .\JitsiNdiGui.ps1
 
@@ -187,9 +187,13 @@ function Build-LaunchPreview {
     $args.Add("--room")
     $args.Add($room)
 
-    # v39 safety rule: do not pass --nick from GUI.
-    # In the current native build --nick can change the MUC join resource and may break media/NDI.
-    # The text box is kept for the next native-side display-name fix, but launch stays --room-only.
+    if ($chkNickOnStart.Checked) {
+        $nick = (Sanitize-Name $txtNick.Text)
+        if (-not [string]::IsNullOrWhiteSpace($nick)) {
+            $args.Add("--nick")
+            $args.Add($nick)
+        }
+    }
 
     $preview = (Quote-CliArg $exePath) + " " + (Join-CliArgs $args)
     $script:lastLaunchPreview = $preview
@@ -631,8 +635,15 @@ function Start-Receiver {
     $args.Add($room)
 
     # Keep the native/WebRTC/NDI path as close to the working build as possible.
-    # Do NOT pass --quality/--width/--height/--ndi-name here.
-    # v39 safety rule: do NOT pass --nick from GUI either, because this build may break MUC/media routing when nick changes.
+    # Do NOT pass --quality here: the uploaded native build does not implement it.
+    # Nick is applied only on join, so changing it requires Stop -> Start.
+    if ($chkNickOnStart.Checked) {
+        $nick = (Sanitize-Name $txtNick.Text)
+        if (-not [string]::IsNullOrWhiteSpace($nick)) {
+            $args.Add("--nick")
+            $args.Add($nick)
+        }
+    }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exePath
@@ -656,7 +667,11 @@ function Start-Receiver {
     $script:lastLaunchPreview = (Quote-CliArg $psi.FileName) + " " + $psi.Arguments
     Append-Log ("[GUI] Starting: " + $psi.FileName + " " + $psi.Arguments)
     Append-Log ("[GUI] Parsed room: " + $room)
-    Append-Log ("[GUI] Nick field is UI-only in v39. No --nick is sent; native uses its working default nick/resource.")
+    if ($chkNickOnStart.Checked) {
+        Append-Log ("[GUI] Nick option is enabled. Nick applies only on join/restart.")
+    } else {
+        Append-Log ("[GUI] Nick option is disabled. Native will use its built-in default nick.")
+    }
     Append-Log ("[GUI] Quality selector is monitoring-only in this GUI build; no quality flags are sent.")
     if ($script:currentLogFile) { Append-Log ("[GUI] Session log file: " + $script:currentLogFile) }
 
@@ -819,7 +834,7 @@ $top.Controls.Add($btnLogs, 5, 1)
 
 Set-ExePath (Find-NativeExe)
 
-Add-Label "Ник в интерфейсе:" 2 0 | Out-Null
+Add-Label "Ник в Jitsi:" 2 0 | Out-Null
 $txtNick = New-Object System.Windows.Forms.TextBox
 $txtNick.Dock = "Fill"
 $txtNick.Text = "Jitsi NDI"
@@ -837,10 +852,9 @@ $cmbQuality.Enabled = $false
 $top.Controls.Add($cmbQuality, 3, 2)
 
 $chkNickOnStart = New-Object System.Windows.Forms.CheckBox
-$chkNickOnStart.Text = "ник пока не передаётся (--nick отключён)"
+$chkNickOnStart.Text = "передать ник при следующем старте"
 $chkNickOnStart.Dock = "Fill"
-$chkNickOnStart.Checked = $false
-$chkNickOnStart.Enabled = $false
+$chkNickOnStart.Checked = $true
 $chkNickOnStart.Add_CheckedChanged({ [void](Build-LaunchPreview) })
 $top.Controls.Add($chkNickOnStart, 4, 2)
 $top.SetColumnSpan($chkNickOnStart, 2)
@@ -1030,7 +1044,6 @@ Update-StatsBar
 [void](Build-LaunchPreview)
 Append-Log "[GUI v38-visual-monitoring] Готово. Вставь ссылку Jitsi и нажми Старт."
 Append-Log "[GUI] Основа запуска сохранена: GUI не передаёт --quality/--width/--height/--ndi-name и не меняет WebRTC/NDI-часть."
-Append-Log "[GUI] v39: --nick отключён в GUI, потому что галочка ломала рабочий вход/NDI."
 Append-Log "[GUI] Новые элементы v38 только читают лог и помогают копировать данные; запуск native оставлен как в рабочей v37."
 Append-Log "[GUI] Ник применяется только при новом входе в комнату: измени ник, затем Стоп -> Старт."
 

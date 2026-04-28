@@ -1,4 +1,4 @@
-﻿# Jitsi NDI Native - safe visual monitoring GUI launcher v39
+﻿﻿# Jitsi NDI Native - simple Windows GUI launcher
 # Place this file in D:\MEDIA\Desktop\jitsi-ndi-native and run:
 # powershell -ExecutionPolicy Bypass -File .\JitsiNdiGui.ps1
 
@@ -18,9 +18,6 @@ $script:isStopping = $false
 $script:selectedExePath = $null
 $script:logDir = Join-Path $script:repoRoot "logs"
 $script:currentLogFile = $null
-$script:lastLaunchPreview = ""
-$script:lastQualityRequest = "—"
-$script:lastVideoFrameAt = "—"
 
 function Convert-JitsiInputToRoom {
     param([string]$InputText)
@@ -76,124 +73,6 @@ function Sanitize-Name {
     $x = $x -replace "[\\/:*?`"<>|]", "_"
     if ($x.Length -gt 64) { $x = $x.Substring(0,64) }
     return $x
-}
-
-
-function Set-TextSafe {
-    param([object]$Control, [string]$Text)
-    if ($Control -and -not $Control.IsDisposed) {
-        $Control.Text = $Text
-    }
-}
-
-function Get-ResolutionClass {
-    param([string]$Resolution)
-    if ([string]::IsNullOrWhiteSpace($Resolution)) { return "unknown" }
-    if ($Resolution -match "(\d+)x(\d+)") {
-        $h = [int]$Matches[2]
-        if ($h -ge 1000) { return "1080p" }
-        if ($h -ge 700) { return "720p" }
-        if ($h -gt 0) { return "<=540p" }
-    }
-    return "unknown"
-}
-
-function Find-RowByNdiDisplayName {
-    param([string]$displayName)
-    if ([string]::IsNullOrWhiteSpace($displayName)) { return $null }
-
-    foreach ($key in @($script:rowsByKey.Keys)) {
-        $row = $script:rowsByKey[$key]
-        $name = $row.Cells["Name"].Value -as [string]
-        if ($name -eq $displayName) { return $row }
-    }
-
-    return $null
-}
-
-function Update-StatsBar {
-    if (-not $grid -or $grid.IsDisposed) { return }
-    if ($grid.InvokeRequired) {
-        try { [void]$grid.BeginInvoke([System.Action]{ Update-StatsBar }) } catch {}
-        return
-    }
-
-    $sources = 0
-    $cameras = 0
-    $screens = 0
-    $audio = 0
-    $video = 0
-    $r1080 = 0
-    $r720 = 0
-    $r540 = 0
-    $rUnknown = 0
-
-    foreach ($row in $grid.Rows) {
-        if ($row.IsNewRow) { continue }
-        $sources++
-        $kind = ($row.Cells["Kind"].Value -as [string])
-        if ($kind -eq "camera") { $cameras++ }
-        elseif ($kind -eq "screen") { $screens++ }
-        elseif ($kind -eq "audio") { $audio++ }
-        elseif ($kind) { $video++ }
-
-        $res = ($row.Cells["Resolution"].Value -as [string])
-        $cls = Get-ResolutionClass $res
-        if ($cls -eq "1080p") { $r1080++ }
-        elseif ($cls -eq "720p") { $r720++ }
-        elseif ($cls -eq "<=540p") { $r540++ }
-        else { $rUnknown++ }
-    }
-
-    Set-TextSafe $lblSourceStats ("Источники: {0} | камеры: {1} | экраны: {2}" -f $sources, $cameras, $screens)
-    Set-TextSafe $lblResolutionStats ("Разрешения: 1080p {0} | 720p {1} | <=540p {2} | ? {3}" -f $r1080, $r720, $r540, $rUnknown)
-}
-
-function Update-RoomPreview {
-    if (-not $lblRoomPreview -or $lblRoomPreview.IsDisposed) { return }
-    $room = Convert-JitsiInputToRoom $txtRoom.Text
-    if ([string]::IsNullOrWhiteSpace($room)) {
-        $lblRoomPreview.Text = "Room: —"
-    } else {
-        $lblRoomPreview.Text = "Room: " + $room
-    }
-}
-
-function Copy-TextToClipboard {
-    param([string]$Text)
-    if ([string]::IsNullOrWhiteSpace($Text)) { return }
-    try {
-        [System.Windows.Forms.Clipboard]::SetText($Text)
-        Append-Log ("[GUI] Copied to clipboard: " + $Text)
-    } catch {
-        [System.Windows.Forms.MessageBox]::Show("Clipboard copy failed.`n" + $_.Exception.Message, "Jitsi NDI GUI") | Out-Null
-    }
-}
-
-function Get-SelectedGridValue {
-    param([string]$ColumnName)
-    if (-not $grid -or $grid.IsDisposed -or $grid.SelectedRows.Count -lt 1) { return "" }
-    try { return [string]$grid.SelectedRows[0].Cells[$ColumnName].Value } catch { return "" }
-}
-
-function Build-LaunchPreview {
-    $exePath = $script:selectedExePath
-    if ([string]::IsNullOrWhiteSpace($exePath)) { $exePath = Find-NativeExe }
-
-    $room = Convert-JitsiInputToRoom $txtRoom.Text
-    if ([string]::IsNullOrWhiteSpace($room)) { $room = "<room>" }
-
-    $args = New-Object System.Collections.Generic.List[string]
-    $args.Add("--room")
-    $args.Add($room)
-
-    # v39 safety rule: do not pass --nick from GUI.
-    # In the current native build --nick can change the MUC join resource and may break media/NDI.
-    # The text box is kept for the next native-side display-name fix, but launch stays --room-only.
-
-    $preview = (Quote-CliArg $exePath) + " " + (Join-CliArgs $args)
-    $script:lastLaunchPreview = $preview
-    return $preview
 }
 
 function Append-Log {
@@ -268,7 +147,6 @@ function Ensure-Row {
     if ($kind) { $row.Cells["Kind"].Value = $kind }
     $row.Cells["Updated"].Value = (Get-Date).ToString("HH:mm:ss")
 
-    Update-StatsBar
     return $row
 }
 
@@ -323,22 +201,12 @@ function Update-EndpointRows {
         if ($stats.connectionQuality) { $row.Cells["Quality"].Value = ("{0:N0}%" -f [double]$stats.connectionQuality) }
         if ($stats.jvbRTT) { $row.Cells["RTT"].Value = "$($stats.jvbRTT) ms" }
     }
-
-    Update-StatsBar
 }
 
 function Parse-Line {
     param([string]$line)
 
     if ([string]::IsNullOrWhiteSpace($line)) { return }
-
-    if ($line -match "ReceiverVideoConstraints|requesting .*1080p|LastN/unlimited") {
-        if ($line -match "all-on-stage") { $script:lastQualityRequest = "all-on-stage 1080p" }
-        elseif ($line -match "equal-priority") { $script:lastQualityRequest = "equal-priority 1080p" }
-        elseif ($line -match "1080p") { $script:lastQualityRequest = "1080p requested" }
-        elseif ($line -match "LastN/unlimited") { $script:lastQualityRequest = "LastN unlimited" }
-        Set-TextSafe $lblQualityRequest ("Quality request: " + $script:lastQualityRequest)
-    }
 
     # NDI source created
     if ($line -match "created NDI participant source:\s*(.+?)\s+endpoint=([A-Za-z0-9_-]+)") {
@@ -359,20 +227,12 @@ function Parse-Line {
         $displayName = $sourceName -replace "^JitsiNativeNDI\s*-\s*", ""
         $displayName = $displayName.Trim()
 
-        $row = Find-RowByNdiDisplayName $displayName
-        if (-not $row) {
-            $key = $displayName
-            if ($displayName -match "([A-Za-z0-9]{6,})(?:-|$)") { $key = $Matches[1] }
-            $kind = Get-SourceKind -sourceKey $key -sourceName $sourceName
-            $row = Ensure-Row -key $key -endpoint $key -displayName $displayName -kind $kind
-        }
-        if ($row) {
-            $row.Cells["Resolution"].Value = "${w}x${h}"
-            $row.Cells["Updated"].Value = (Get-Date).ToString("HH:mm:ss")
-            $script:lastVideoFrameAt = (Get-Date).ToString("HH:mm:ss")
-            Set-TextSafe $lblLastFrame ("Последний NDI кадр: " + $script:lastVideoFrameAt)
-            Update-StatsBar
-        }
+        $key = $displayName
+        if ($displayName -match "([A-Za-z0-9]{6,})(?:-|$)") { $key = $Matches[1] }
+
+        $kind = Get-SourceKind -sourceKey $key -sourceName $sourceName
+        $row = Ensure-Row -key $key -endpoint $key -displayName $displayName -kind $kind
+        if ($row) { $row.Cells["Resolution"].Value = "${w}x${h}" }
         return
     }
 
@@ -534,27 +394,6 @@ function Open-LogFolder {
     }
 }
 
-
-function Open-CurrentLogFile {
-    try {
-        if ($script:currentLogFile -and (Test-Path $script:currentLogFile)) {
-            Start-Process notepad.exe $script:currentLogFile
-        } else {
-            Open-LogFolder
-        }
-    } catch {
-        [System.Windows.Forms.MessageBox]::Show("Could not open current log.`n" + $_.Exception.Message, "Jitsi NDI GUI") | Out-Null
-    }
-}
-
-function Clear-VisibleLog {
-    try {
-        $txtLog.Clear()
-        $script:logLines.Clear()
-        Append-Log "[GUI] Visible log cleared. File log is not deleted."
-    } catch {}
-}
-
 function Set-UiRunning {
     param([bool]$Running)
 
@@ -631,8 +470,15 @@ function Start-Receiver {
     $args.Add($room)
 
     # Keep the native/WebRTC/NDI path as close to the working build as possible.
-    # Do NOT pass --quality/--width/--height/--ndi-name here.
-    # v39 safety rule: do NOT pass --nick from GUI either, because this build may break MUC/media routing when nick changes.
+    # Do NOT pass --quality here: the uploaded native build does not implement it.
+    # Nick is applied only on join, so changing it requires Stop -> Start.
+    if ($chkNickOnStart.Checked) {
+        $nick = (Sanitize-Name $txtNick.Text)
+        if (-not [string]::IsNullOrWhiteSpace($nick)) {
+            $args.Add("--nick")
+            $args.Add($nick)
+        }
+    }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exePath
@@ -648,15 +494,15 @@ function Start-Receiver {
 
     $script:rowsByKey.Clear()
     $grid.Rows.Clear()
-    Update-StatsBar
-    Set-TextSafe $lblLastFrame "Последний NDI кадр: —"
-    Set-TextSafe $lblQualityRequest "Quality request: —"
     $txtLog.Clear()
     Start-SessionLog
-    $script:lastLaunchPreview = (Quote-CliArg $psi.FileName) + " " + $psi.Arguments
     Append-Log ("[GUI] Starting: " + $psi.FileName + " " + $psi.Arguments)
     Append-Log ("[GUI] Parsed room: " + $room)
-    Append-Log ("[GUI] Nick field is UI-only in v39. No --nick is sent; native uses its working default nick/resource.")
+    if ($chkNickOnStart.Checked) {
+        Append-Log ("[GUI] Nick option is enabled. Nick applies only on join/restart.")
+    } else {
+        Append-Log ("[GUI] Nick option is disabled. Native will use its built-in default nick.")
+    }
     Append-Log ("[GUI] Quality selector is monitoring-only in this GUI build; no quality flags are sent.")
     if ($script:currentLogFile) { Append-Log ("[GUI] Session log file: " + $script:currentLogFile) }
 
@@ -746,7 +592,7 @@ function Stop-Receiver {
 # ---------------- UI ----------------
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Jitsi NDI Native GUI v38"
+$form.Text = "Jitsi NDI Native GUI"
 $form.Size = New-Object System.Drawing.Size(1180, 760)
 $form.StartPosition = "CenterScreen"
 $form.MinimumSize = New-Object System.Drawing.Size(980, 640)
@@ -783,7 +629,6 @@ $txtRoom.Dock = "Fill"
 $txtRoom.Text = "https://meet.jit.si/6767676766767penxyi"
 $top.Controls.Add($txtRoom, 1, 0)
 $top.SetColumnSpan($txtRoom, 5)
-$txtRoom.Add_TextChanged({ Update-RoomPreview })
 
 Add-Label "Exe:" 1 0 | Out-Null
 $lblExe = New-Object System.Windows.Forms.Label
@@ -819,11 +664,10 @@ $top.Controls.Add($btnLogs, 5, 1)
 
 Set-ExePath (Find-NativeExe)
 
-Add-Label "Ник в интерфейсе:" 2 0 | Out-Null
+Add-Label "Ник в Jitsi:" 2 0 | Out-Null
 $txtNick = New-Object System.Windows.Forms.TextBox
 $txtNick.Dock = "Fill"
 $txtNick.Text = "Jitsi NDI"
-$txtNick.Add_TextChanged({ [void](Build-LaunchPreview) })
 $top.Controls.Add($txtNick, 1, 2)
 
 Add-Label "Качество:" 2 2 | Out-Null
@@ -837,11 +681,9 @@ $cmbQuality.Enabled = $false
 $top.Controls.Add($cmbQuality, 3, 2)
 
 $chkNickOnStart = New-Object System.Windows.Forms.CheckBox
-$chkNickOnStart.Text = "ник пока не передаётся (--nick отключён)"
+$chkNickOnStart.Text = "передать ник при следующем старте"
 $chkNickOnStart.Dock = "Fill"
-$chkNickOnStart.Checked = $false
-$chkNickOnStart.Enabled = $false
-$chkNickOnStart.Add_CheckedChanged({ [void](Build-LaunchPreview) })
+$chkNickOnStart.Checked = $true
 $top.Controls.Add($chkNickOnStart, 4, 2)
 $top.SetColumnSpan($chkNickOnStart, 2)
 
@@ -916,57 +758,7 @@ foreach ($c in $columns) {
     [void]$grid.Columns.Add($col)
 }
 
-
-$panel1Layout = New-Object System.Windows.Forms.TableLayoutPanel
-$panel1Layout.Dock = "Fill"
-$panel1Layout.ColumnCount = 1
-$panel1Layout.RowCount = 2
-[void]$panel1Layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 34)))
-[void]$panel1Layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$split.Panel1.Controls.Add($panel1Layout)
-
-$sourceBar = New-Object System.Windows.Forms.TableLayoutPanel
-$sourceBar.Dock = "Fill"
-$sourceBar.ColumnCount = 4
-$sourceBar.RowCount = 1
-[void]$sourceBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 26)))
-[void]$sourceBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
-[void]$sourceBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 24)))
-[void]$sourceBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 20)))
-
-$lblRoomPreview = New-Object System.Windows.Forms.Label
-$lblRoomPreview.Dock = "Fill"
-$lblRoomPreview.TextAlign = "MiddleLeft"
-$lblRoomPreview.Text = "Room: —"
-$sourceBar.Controls.Add($lblRoomPreview, 0, 0)
-
-$lblSourceStats = New-Object System.Windows.Forms.Label
-$lblSourceStats.Dock = "Fill"
-$lblSourceStats.TextAlign = "MiddleLeft"
-$lblSourceStats.Text = "Источники: 0 | камеры: 0 | экраны: 0"
-$sourceBar.Controls.Add($lblSourceStats, 1, 0)
-
-$lblResolutionStats = New-Object System.Windows.Forms.Label
-$lblResolutionStats.Dock = "Fill"
-$lblResolutionStats.TextAlign = "MiddleLeft"
-$lblResolutionStats.Text = "Разрешения: 1080p 0 | 720p 0 | <=540p 0 | ? 0"
-$sourceBar.Controls.Add($lblResolutionStats, 2, 0)
-
-$lblLastFrame = New-Object System.Windows.Forms.Label
-$lblLastFrame.Dock = "Fill"
-$lblLastFrame.TextAlign = "MiddleLeft"
-$lblLastFrame.Text = "Последний NDI кадр: —"
-$sourceBar.Controls.Add($lblLastFrame, 3, 0)
-
-$panel1Layout.Controls.Add($sourceBar, 0, 0)
-$panel1Layout.Controls.Add($grid, 0, 1)
-
-$gridMenu = New-Object System.Windows.Forms.ContextMenuStrip
-[void]$gridMenu.Items.Add("Копировать NDI/имя", $null, { Copy-TextToClipboard (Get-SelectedGridValue "Name") })
-[void]$gridMenu.Items.Add("Копировать endpoint", $null, { Copy-TextToClipboard (Get-SelectedGridValue "Endpoint") })
-[void]$gridMenu.Items.Add("Копировать разрешение", $null, { Copy-TextToClipboard (Get-SelectedGridValue "Resolution") })
-[void]$gridMenu.Items.Add("Копировать source key", $null, { Copy-TextToClipboard (Get-SelectedGridValue "Key") })
-$grid.ContextMenuStrip = $gridMenu
+$split.Panel1.Controls.Add($grid)
 
 $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Dock = "Fill"
@@ -975,63 +767,14 @@ $txtLog.ScrollBars = "Both"
 $txtLog.ReadOnly = $true
 $txtLog.WordWrap = $false
 $txtLog.Font = New-Object System.Drawing.Font("Consolas", 9)
-
-$panel2Layout = New-Object System.Windows.Forms.TableLayoutPanel
-$panel2Layout.Dock = "Fill"
-$panel2Layout.ColumnCount = 1
-$panel2Layout.RowCount = 2
-[void]$panel2Layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 34)))
-[void]$panel2Layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$split.Panel2.Controls.Add($panel2Layout)
-
-$logBar = New-Object System.Windows.Forms.TableLayoutPanel
-$logBar.Dock = "Fill"
-$logBar.ColumnCount = 5
-$logBar.RowCount = 1
-[void]$logBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 170)))
-[void]$logBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 150)))
-[void]$logBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 130)))
-[void]$logBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-[void]$logBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 300)))
-
-$btnCopyCommand = New-Object System.Windows.Forms.Button
-$btnCopyCommand.Text = "Копировать команду"
-$btnCopyCommand.Dock = "Fill"
-$btnCopyCommand.Add_Click({ Copy-TextToClipboard (Build-LaunchPreview) })
-$logBar.Controls.Add($btnCopyCommand, 0, 0)
-
-$btnOpenCurrentLog = New-Object System.Windows.Forms.Button
-$btnOpenCurrentLog.Text = "Текущий лог"
-$btnOpenCurrentLog.Dock = "Fill"
-$btnOpenCurrentLog.Add_Click({ Open-CurrentLogFile })
-$logBar.Controls.Add($btnOpenCurrentLog, 1, 0)
-
-$btnClearLog = New-Object System.Windows.Forms.Button
-$btnClearLog.Text = "Очистить лог"
-$btnClearLog.Dock = "Fill"
-$btnClearLog.Add_Click({ Clear-VisibleLog })
-$logBar.Controls.Add($btnClearLog, 2, 0)
-
-$lblQualityRequest = New-Object System.Windows.Forms.Label
-$lblQualityRequest.Dock = "Fill"
-$lblQualityRequest.TextAlign = "MiddleRight"
-$lblQualityRequest.Text = "Quality request: —"
-$logBar.Controls.Add($lblQualityRequest, 4, 0)
-
-$panel2Layout.Controls.Add($logBar, 0, 0)
-$panel2Layout.Controls.Add($txtLog, 0, 1)
+$split.Panel2.Controls.Add($txtLog)
 
 $form.Add_FormClosing({
     Stop-Receiver
 })
 
-Update-RoomPreview
-Update-StatsBar
-[void](Build-LaunchPreview)
-Append-Log "[GUI v38-visual-monitoring] Готово. Вставь ссылку Jitsi и нажми Старт."
-Append-Log "[GUI] Основа запуска сохранена: GUI не передаёт --quality/--width/--height/--ndi-name и не меняет WebRTC/NDI-часть."
-Append-Log "[GUI] v39: --nick отключён в GUI, потому что галочка ломала рабочий вход/NDI."
-Append-Log "[GUI] Новые элементы v38 только читают лог и помогают копировать данные; запуск native оставлен как в рабочей v37."
+Append-Log "[GUI v33-interface-only] Готово. Вставь ссылку Jitsi и нажми Старт."
+Append-Log "[GUI] Основа запуска сохранена: GUI не передаёт --quality и не меняет WebRTC/NDI-часть."
 Append-Log "[GUI] Ник применяется только при новом входе в комнату: измени ник, затем Стоп -> Старт."
 
 [void][System.Windows.Forms.Application]::Run($form)
