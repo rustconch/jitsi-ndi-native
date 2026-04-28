@@ -1,4 +1,4 @@
-# Jitsi NDI Native GUI v62 - clean visual only
+# Jitsi NDI Native GUI v61 - visual redesign only
 # ASCII-only PowerShell script to avoid codepage/parser issues.
 # Based on stable v59b detached launcher: no live native stdout reading, no NDI scanning.
 # Optional --nick remains exactly as in the working v59b flow.
@@ -189,6 +189,7 @@ function Set-RunningUi {
         $txtRoom.Enabled = -not $running
         $txtNick.Enabled = -not $running
         $chkNick.Enabled = -not $running
+        $btnExe.Enabled = -not $running
         if ($running) {
             $lblStatus.Text = 'CONNECTED'
             $lblStatus.BackColor = $C_Mint
@@ -247,7 +248,7 @@ $lblLogo = New-Label 'Jitsi NDI' 0 26 760 70 33 $C_Orange ([System.Drawing.FontS
 $lblLogo.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $form.Controls.Add($lblLogo)
 
-$lblSub = New-Label '' 0 88 760 24 11 $C_Asphalt ([System.Drawing.FontStyle]::Regular)
+$lblSub = New-Label 'native conference receiver' 0 88 760 24 11 $C_Asphalt ([System.Drawing.FontStyle]::Regular)
 $lblSub.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $form.Controls.Add($lblSub)
 
@@ -308,7 +309,7 @@ $chkNick.ForeColor = $C_Asphalt
 $chkNick.Checked = $true
 $card.Controls.Add($chkNick)
 
-$lblNickNote = New-Label '' 170 150 370 22 8.8 $C_TextSoft
+$lblNickNote = New-Label 'Changing name requires Stop -> edit -> Connect.' 170 150 370 22 8.8 $C_TextSoft
 $card.Controls.Add($lblNickNote)
 
 $statusBox = New-Object System.Windows.Forms.Panel
@@ -333,8 +334,8 @@ $statusBox.Controls.Add($lblStatusHint)
 
 # Footer with existing controls
 $footer = New-Object System.Windows.Forms.Panel
-$footer.Location = New-Object System.Drawing.Point(0, 462)
-$footer.Size = New-Object System.Drawing.Size(760, 88)
+$footer.Location = New-Object System.Drawing.Point(0, 438)
+$footer.Size = New-Object System.Drawing.Size(760, 122)
 $footer.Anchor = 'Left,Right,Bottom'
 $footer.BackColor = $C_Dark
 $form.Controls.Add($footer)
@@ -354,7 +355,19 @@ $btnStop.Enabled = $false
 Set-ButtonStyle $btnStop $C_Dark2 $C_Milk $true
 $footer.Controls.Add($btnStop)
 
+$btnExe = New-Object System.Windows.Forms.Button
+$btnExe.Text = 'Exe...'
+$btnExe.Location = New-Object System.Drawing.Point(284, 22)
+$btnExe.Size = New-Object System.Drawing.Size(88, 42)
+Set-ButtonStyle $btnExe $C_Dark2 $C_Milk
+$footer.Controls.Add($btnExe)
 
+$btnCopy = New-Object System.Windows.Forms.Button
+$btnCopy.Text = 'Copy command'
+$btnCopy.Location = New-Object System.Drawing.Point(382, 22)
+$btnCopy.Size = New-Object System.Drawing.Size(128, 42)
+Set-ButtonStyle $btnCopy $C_Dark2 $C_Milk
+$footer.Controls.Add($btnCopy)
 
 $btnOpenLog = New-Object System.Windows.Forms.Button
 $btnOpenLog.Text = 'Open log'
@@ -370,11 +383,13 @@ $btnLogs.Size = New-Object System.Drawing.Size(110, 42)
 Set-ButtonStyle $btnLogs $C_Dark2 $C_Milk
 $footer.Controls.Add($btnLogs)
 
+$lblFooter = New-Label 'Visual-only redesign. No NDI scan, no quality controls, no live native log reading.' 24 78 710 24 9 $C_Milk
+$footer.Controls.Add($lblFooter)
 
 # Compact GUI log
 $txtLog = New-Object System.Windows.Forms.TextBox
 $script:txtLog = $txtLog
-$txtLog.Location = New-Object System.Drawing.Point(82, 438)
+$txtLog.Location = New-Object System.Drawing.Point(82, 418)
 $txtLog.Size = New-Object System.Drawing.Size(596, 16)
 $txtLog.Multiline = $true
 $txtLog.ScrollBars = 'None'
@@ -402,11 +417,14 @@ function Update-VisualLayout {
         $lblNickNote.Width = $fieldW
         $statusBox.Width = $card.Width - 72
         $lblStatusHint.Width = [Math]::Max(120, $statusBox.Width - 266)
-        $footer.Top = $form.ClientSize.Height - 88
+        $footer.Top = $form.ClientSize.Height - 122
         $footer.Width = $form.ClientSize.Width
         $right = $form.ClientSize.Width - 24
         $btnLogs.Left = $right - $btnLogs.Width
         $btnOpenLog.Left = $btnLogs.Left - 10 - $btnOpenLog.Width
+        $btnCopy.Left = $btnOpenLog.Left - 10 - $btnCopy.Width
+        $btnExe.Left = $btnCopy.Left - 10 - $btnExe.Width
+        $lblFooter.Width = $form.ClientSize.Width - 48
         $txtLog.Left = $card.Left
         $txtLog.Width = $card.Width
         $txtLog.Top = $footer.Top - 20
@@ -425,7 +443,28 @@ $txtRoom.Add_TextChanged({
 })
 $lblParsed.Text = 'Room: ' + (Convert-JitsiInputToRoom $txtRoom.Text)
 
+$btnExe.Add_Click({
+    try {
+        $ofd = New-Object System.Windows.Forms.OpenFileDialog
+        $ofd.Filter = 'jitsi-ndi-native.exe|jitsi-ndi-native.exe|Executable files (*.exe)|*.exe|All files (*.*)|*.*'
+        $ofd.InitialDirectory = $script:repoRoot
+        if ($ofd.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+            $script:selectedExePath = $ofd.FileName
+            Append-Log "[GUI] Selected exe manually: $($ofd.FileName)"
+        }
+    } catch { Append-Log "[GUI] Exe picker failed: $($_.Exception.Message)" }
+})
 
+$btnCopy.Add_Click({
+    try {
+        if ($script:lastCommand) {
+            [System.Windows.Forms.Clipboard]::SetText($script:lastCommand)
+            Append-Log '[GUI] Command copied.'
+        } else {
+            Append-Log '[GUI] No command yet. Press Connect first.'
+        }
+    } catch { Append-Log "[GUI] Copy failed: $($_.Exception.Message)" }
+})
 
 $btnOpenLog.Add_Click({
     try {
@@ -457,7 +496,7 @@ $btnStart.Add_Click({
 
         $exe = Find-NativeExe
         if (-not $exe) {
-            [System.Windows.Forms.MessageBox]::Show($form, 'jitsi-ndi-native.exe not found in build folders.', 'Missing exe', 'OK', 'Error') | Out-Null
+            [System.Windows.Forms.MessageBox]::Show($form, 'jitsi-ndi-native.exe not found. Use Exe... button.', 'Missing exe', 'OK', 'Error') | Out-Null
             return
         }
 
@@ -470,11 +509,15 @@ $btnStart.Add_Click({
         $nick = ("$($txtNick.Text)").Trim()
         if ($chkNick.Checked -and -not [string]::IsNullOrWhiteSpace($nick)) {
             $argsList += @('--nick', $nick)
+            Append-Log '[GUI] Nick will be passed as --nick display name.'
         } else {
+            Append-Log '[GUI] Nick is not passed.'
         }
 
         $arguments = Join-ProcessArgs $argsList
         $script:lastCommand = (Quote-Arg $exe) + ' ' + $arguments
+        Append-Log "[GUI] Starting native. PID will appear after launch."
+        Append-Log "[GUI] Session log file: $script:currentLogFile"
 
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $exe
@@ -493,7 +536,7 @@ $btnStart.Add_Click({
         $script:nativeStartedAt = Get-Date
         $script:isStopping = $false
         Set-RunningUi $true
-        Append-Log "[GUI] Started. PID=$($p.Id)"
+        Append-Log "[GUI] Native process started. PID=$($p.Id)"
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
@@ -551,4 +594,6 @@ $form.Add_FormClosing({
 
 Set-RunningUi $false
 Update-VisualLayout
+Append-Log '[GUI] v61 visual redesign loaded. Functional logic is unchanged from working v59b.'
+if ($script:fontFamily) { Append-Log '[GUI] Circe font loaded from local gui/fonts folder.' } else { Append-Log '[GUI] Circe font not found locally; Windows font fallback is active.' }
 [void]$form.ShowDialog()
