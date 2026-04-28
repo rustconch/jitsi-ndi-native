@@ -1,4 +1,4 @@
-# Jitsi NDI Native GUI v63 - visual only with speaker link generator
+# Jitsi NDI Native GUI v62 - clean visual only
 # ASCII-only PowerShell script to avoid codepage/parser issues.
 # Based on stable v59b detached launcher: no live native stdout reading, no NDI scanning.
 # Optional --nick remains exactly as in the working v59b flow.
@@ -100,52 +100,6 @@ function Convert-JitsiInputToRoom {
         if ($part) { return [System.Uri]::UnescapeDataString($part.Split('/')[0]) }
     }
     return ($s.Split('?')[0].Split('#')[0].Trim('/'))
-}
-
-function Get-JitsiBaseFromInput {
-    param([string]$InputText, [string]$Room)
-    $s = ("$InputText").Trim()
-    $encodedRoom = [System.Uri]::EscapeDataString($Room)
-    if ($s -match '^https?://') {
-        try {
-            $uri = [System.Uri]$s
-            $scheme = $uri.Scheme
-            $host = $uri.Host
-            if ($uri.Port -gt 0 -and -not (($scheme -eq 'https' -and $uri.Port -eq 443) -or ($scheme -eq 'http' -and $uri.Port -eq 80))) {
-                $host = $host + ':' + $uri.Port
-            }
-            return ($scheme + '://' + $host + '/' + $encodedRoom)
-        } catch {}
-    }
-    return ('https://meet.jit.si/' + $encodedRoom)
-}
-
-function Build-SpeakerLink {
-    param([string]$InputText)
-    $room = Convert-JitsiInputToRoom $InputText
-    if ([string]::IsNullOrWhiteSpace($room)) { return '' }
-    $base = Get-JitsiBaseFromInput $InputText $room
-    $params = @(
-        'config.resolution=1080',
-        'config.constraints.video.height.ideal=1080',
-        'config.constraints.video.height.max=1080',
-        'config.constraints.video.width.ideal=1920',
-        'config.constraints.video.width.max=1920',
-        'config.constraints.video.frameRate.max=30',
-        'config.maxFullResolutionParticipants=10',
-        'config.videoQuality.enableAdaptiveMode=false',
-        'config.desktopSharingFrameRate.min=30',
-        'config.desktopSharingFrameRate.max=30'
-    )
-    return ($base + '#' + ($params -join '&'))
-}
-
-function Update-SpeakerLink {
-    try {
-        if ($script:txtSpeakerLink -and -not $script:txtSpeakerLink.IsDisposed) {
-            $script:txtSpeakerLink.Text = Build-SpeakerLink $txtRoom.Text
-        }
-    } catch {}
 }
 
 function Find-NativeExe {
@@ -266,9 +220,9 @@ Update-VisualLayout
 # UI shell
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Jitsi NDI'
-$form.Size = New-Object System.Drawing.Size(760, 690)
+$form.Size = New-Object System.Drawing.Size(760, 600)
 $form.StartPosition = 'CenterScreen'
-$form.MinimumSize = New-Object System.Drawing.Size(740, 650)
+$form.MinimumSize = New-Object System.Drawing.Size(740, 560)
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
 $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Show
 $form.Font = New-GuiFont 9.5
@@ -300,7 +254,7 @@ $form.Controls.Add($lblSub)
 # Main white card
 $card = New-Object System.Windows.Forms.Panel
 $card.Location = New-Object System.Drawing.Point(82, 128)
-$card.Size = New-Object System.Drawing.Size(596, 350)
+$card.Size = New-Object System.Drawing.Size(596, 286)
 $card.BackColor = [System.Drawing.Color]::FromArgb(248, 248, 248)
 $card.BorderStyle = [System.Windows.Forms.BorderStyle]::None
 $card.Add_Paint({
@@ -332,31 +286,11 @@ $card.Controls.Add($txtRoom)
 $lblParsed = New-Label 'Room:' 170 61 370 20 8.8 $C_TextSoft
 $card.Controls.Add($lblParsed)
 
-$lblSpeaker = New-Label 'Speaker link' 36 92 130 24 10 $C_TextSoft
-$card.Controls.Add($lblSpeaker)
-
-$txtSpeakerLink = New-Object System.Windows.Forms.TextBox
-$script:txtSpeakerLink = $txtSpeakerLink
-$txtSpeakerLink.Location = New-Object System.Drawing.Point(170, 89)
-$txtSpeakerLink.Size = New-Object System.Drawing.Size(292, 28)
-$txtSpeakerLink.Font = New-GuiFont 8.8
-$txtSpeakerLink.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-$txtSpeakerLink.BackColor = [System.Drawing.Color]::White
-$txtSpeakerLink.ReadOnly = $true
-$card.Controls.Add($txtSpeakerLink)
-
-$btnCopySpeaker = New-Object System.Windows.Forms.Button
-$btnCopySpeaker.Text = 'Copy'
-$btnCopySpeaker.Location = New-Object System.Drawing.Point(472, 87)
-$btnCopySpeaker.Size = New-Object System.Drawing.Size(68, 31)
-Set-ButtonStyle $btnCopySpeaker $C_Orange $C_Asphalt
-$card.Controls.Add($btnCopySpeaker)
-
-$lblNick = New-Label 'Your name' 36 148 130 24 10 $C_TextSoft
+$lblNick = New-Label 'Your name' 36 92 130 24 10 $C_TextSoft
 $card.Controls.Add($lblNick)
 
 $txtNick = New-Object System.Windows.Forms.TextBox
-$txtNick.Location = New-Object System.Drawing.Point(170, 145)
+$txtNick.Location = New-Object System.Drawing.Point(170, 89)
 $txtNick.Size = New-Object System.Drawing.Size(370, 28)
 $txtNick.Font = New-GuiFont 10
 $txtNick.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
@@ -366,7 +300,7 @@ $card.Controls.Add($txtNick)
 
 $chkNick = New-Object System.Windows.Forms.CheckBox
 $chkNick.Text = 'send display name on next start'
-$chkNick.Location = New-Object System.Drawing.Point(170, 179)
+$chkNick.Location = New-Object System.Drawing.Point(170, 123)
 $chkNick.Size = New-Object System.Drawing.Size(260, 24)
 $chkNick.Font = New-GuiFont 9.5
 $chkNick.BackColor = [System.Drawing.Color]::Transparent
@@ -374,11 +308,11 @@ $chkNick.ForeColor = $C_Asphalt
 $chkNick.Checked = $true
 $card.Controls.Add($chkNick)
 
-$lblNickNote = New-Label '' 170 206 370 22 8.8 $C_TextSoft
+$lblNickNote = New-Label '' 170 150 370 22 8.8 $C_TextSoft
 $card.Controls.Add($lblNickNote)
 
 $statusBox = New-Object System.Windows.Forms.Panel
-$statusBox.Location = New-Object System.Drawing.Point(36, 246)
+$statusBox.Location = New-Object System.Drawing.Point(36, 186)
 $statusBox.Size = New-Object System.Drawing.Size(504, 62)
 $statusBox.BackColor = [System.Drawing.Color]::White
 $statusBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
@@ -463,10 +397,6 @@ function Update-VisualLayout {
         $fieldW = [Math]::Max(260, $card.Width - 226)
         $txtRoom.Width = $fieldW
         $lblParsed.Width = $fieldW
-        $copyW = 68
-        $gap = 10
-        $txtSpeakerLink.Width = [Math]::Max(180, $fieldW - $copyW - $gap)
-        $btnCopySpeaker.Left = 170 + $txtSpeakerLink.Width + $gap
         $txtNick.Width = $fieldW
         $chkNick.Width = $fieldW
         $lblNickNote.Width = $fieldW
@@ -491,23 +421,11 @@ $txtRoom.Add_TextChanged({
     try {
         $room = Convert-JitsiInputToRoom $txtRoom.Text
         if ($room) { $lblParsed.Text = "Room: $room" } else { $lblParsed.Text = 'Room:' }
-        Update-SpeakerLink
     } catch {}
 })
 $lblParsed.Text = 'Room: ' + (Convert-JitsiInputToRoom $txtRoom.Text)
-Update-SpeakerLink
 
-$btnCopySpeaker.Add_Click({
-    try {
-        $link = Build-SpeakerLink $txtRoom.Text
-        if ([string]::IsNullOrWhiteSpace($link)) {
-            [System.Windows.Forms.MessageBox]::Show($form, 'Enter Jitsi link or room name first.', 'Speaker link', 'OK', 'Warning') | Out-Null
-            return
-        }
-        [System.Windows.Forms.Clipboard]::SetText($link)
-        Append-Log '[GUI] Speaker link copied.'
-    } catch { Append-Log "[GUI] Copy speaker link failed: $($_.Exception.Message)" }
-})
+
 
 $btnOpenLog.Add_Click({
     try {
