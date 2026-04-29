@@ -1415,7 +1415,12 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
     const auto latestForwardedSourcesMutex = std::make_shared<std::mutex>();
 
     pc->onStateChange([](rtc::PeerConnection::State state) {
-        Logger::info("NativeWebRTCAnswerer: PeerConnection state=", static_cast<int>(state));
+        const int numericState = static_cast<int>(state);
+        Logger::info("NativeWebRTCAnswerer: PeerConnection state=", numericState);
+
+        if (numericState == 4 || numericState == 5) {
+            Logger::warn("NativeWebRTCAnswerer: v76: WebRTC PeerConnection failed/closed; RTP will stop until the Jitsi session reconnects");
+        }
     });
 
     pc->onGatheringStateChange([](rtc::PeerConnection::GatheringState state) {

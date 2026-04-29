@@ -101,7 +101,34 @@ std::string xmlBool(bool value) {
     return value ? "true" : "false";
 }
 
+bool isTurnUserInfoUnreserved(unsigned char c) {
+    return (c >= 'A' && c <= 'Z')
+        || (c >= 'a' && c <= 'z')
+        || (c >= '0' && c <= '9')
+        || c == '-'
+        || c == '_'
+        || c == '.'
+        || c == '~';
+}
 
+std::string percentEncodeTurnUserInfo(const std::string& value) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size());
+
+    for (unsigned char c : value) {
+        if (isTurnUserInfoUnreserved(c)) {
+            out.push_back(static_cast<char>(c));
+            continue;
+        }
+
+        out.push_back('%');
+        out.push_back(hex[(c >> 4) & 0x0F]);
+        out.push_back(hex[c & 0x0F]);
+    }
+
+    return out;
+}
 } // namespace
 
 JitsiSignaling::JitsiSignaling(JitsiSignalingConfig config)
@@ -445,6 +472,30 @@ void JitsiSignaling::handleRoomMetadata(const std::string& xml) {
 
     std::vector<NativeWebRTCAnswerer::IceServer> servers;
 
+    const std::string username = extractJsonString(decoded, "username");
+    const std::string password = extractJsonString(decoded, "password");
+
+    bool turnUdpAdded = false;
+
+    if (
+        contains(decoded, "meet-jit-si-turnrelay.jitsi.net")
+        && contains(decoded, "\"type\":\"turn\"")
+        && contains(decoded, "\"transport\":\"udp\"")
+        && !username.empty()
+        && !password.empty()
+    ) {
+        NativeWebRTCAnswerer::IceServer turnServer;
+        turnServer.uri = "turn:"
+            + percentEncodeTurnUserInfo(username)
+            + ":"
+            + percentEncodeTurnUserInfo(password)
+            + "@meet-jit-si-turnrelay.jitsi.net:443?transport=udp";
+        servers.push_back(turnServer);
+        turnUdpAdded = true;
+
+        Logger::info("Jitsi TURN/UDP metadata parsed and passed to libdatachannel");
+    }
+
     if (contains(decoded, "meet-jit-si-turnrelay.jitsi.net")) {
         NativeWebRTCAnswerer::IceServer stunServer;
         stunServer.uri = "stun:meet-jit-si-turnrelay.jitsi.net:443";
@@ -454,10 +505,14 @@ void JitsiSignaling::handleRoomMetadata(const std::string& xml) {
     if (!servers.empty()) {
         answerer_.setIceServers(servers);
 
-        Logger::info("Jitsi TURN metadata parsed. ICE servers count=", servers.size());
+        Logger::info("Jitsi ICE metadata parsed. ICE servers count=", servers.size());
 
         for (const auto& server : servers) {
-            Logger::info("Jitsi ICE server: ", server.uri);
+            if (server.uri.find("turn:") == 0) {
+                Logger::info("Jitsi ICE server: turn:***@meet-jit-si-turnrelay.jitsi.net:443?transport=udp");
+            } else {
+                Logger::info("Jitsi ICE server: ", server.uri);
+            }
         }
     }
 
@@ -465,11 +520,8 @@ void JitsiSignaling::handleRoomMetadata(const std::string& xml) {
         Logger::warn("Jitsi TURNS service skipped because libjuice backend does not support TURN/TLS");
     }
 
-    const std::string username = extractJsonString(decoded, "username");
-    const std::string password = extractJsonString(decoded, "password");
-
-    if (!username.empty() && !password.empty()) {
-        Logger::info("Jitsi TURN credentials present in metadata, but only STUN is currently passed to libdatachannel");
+    if (!turnUdpAdded && !username.empty() && !password.empty()) {
+        Logger::warn("Jitsi TURN credentials present but TURN/UDP server was not added; using STUN fallback only");
     }
 }
 
