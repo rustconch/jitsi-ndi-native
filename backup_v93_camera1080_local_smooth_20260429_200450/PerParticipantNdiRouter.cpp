@@ -670,7 +670,7 @@ void PerParticipantNdiRouter::startVideoWorkerLocked(ParticipantPipeline& pipeli
     pipeline.videoThread = std::thread(&PerParticipantNdiRouter::videoWorkerLoop, this, &pipeline);
 
     Logger::info(
-        "PerParticipantNdiRouter: v93 per-source video worker started endpoint=",
+        "PerParticipantNdiRouter: v92 per-source video worker started endpoint=",
         pipeline.endpointId
     );
 }
@@ -700,7 +700,7 @@ void PerParticipantNdiRouter::stopVideoWorker(ParticipantPipeline& pipeline) {
     }
 
     Logger::info(
-        "PerParticipantNdiRouter: v93 per-source video worker stopped endpoint=",
+        "PerParticipantNdiRouter: v92 per-source video worker stopped endpoint=",
         pipeline.endpointId,
         " processed=",
         pipeline.processedVideoRtp,
@@ -762,7 +762,7 @@ void PerParticipantNdiRouter::enqueueVideoRtpLocked(
 
     if (droppedNow > 0) {
         Logger::warn(
-            "PerParticipantNdiRouter: v93 source-local video queue overload endpoint=",
+            "PerParticipantNdiRouter: v92 source-local video queue overload endpoint=",
             pipeline.endpointId,
             " droppedOldRtp=",
             droppedNow,
@@ -818,58 +818,9 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
 
     if (packet.acceptedAv1) {
         const auto frames = p.av1.pushRtp(rtp);
-        std::size_t decodedFrameCount = 0;
-
         for (const auto& encoded : frames) {
-            const auto decodedFrames = p.av1Decoder.decode(encoded);
-            decodedFrameCount += decodedFrames.size();
-
-            for (const auto& decoded : decodedFrames) {
+            for (const auto& decoded : p.av1Decoder.decode(encoded)) {
                 p.ndi->sendVideoFrame(decoded, 30, 1);
-            }
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (decodedFrameCount > 0) {
-            p.decodedAv1Frames += decodedFrameCount;
-            p.av1EncodedUnitsWithoutDecodedFrame = 0;
-            p.lastAv1DecodedFrameAt = now;
-        } else if (!frames.empty() && p.decodedAv1Frames > 0) {
-            ++p.av1EncodedUnitsWithoutDecodedFrame;
-
-            const auto sinceDecodedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - p.lastAv1DecodedFrameAt
-            ).count();
-            const auto sinceResetMs = p.lastAv1SoftResetAt.time_since_epoch().count() == 0
-                ? 1000000LL
-                : std::chrono::duration_cast<std::chrono::milliseconds>(now - p.lastAv1SoftResetAt).count();
-
-            /*
-                v93: source-local decoder smoothing.
-                When one camera temporarily stops producing decoded frames while RTP/AV1 temporal
-                units still arrive, do not reconnect the whole conference. Flush only this source's
-                FFmpeg AV1 decoder. This is deliberately conservative: it triggers after several
-                encoded units and more than ~1.5 s since the last decoded frame, with a cooldown.
-            */
-            if (p.av1EncodedUnitsWithoutDecodedFrame >= 30 && sinceDecodedMs >= 1500 && sinceResetMs >= 3000) {
-                ++p.av1DecoderSoftResets;
-                Logger::warn(
-                    "PerParticipantNdiRouter: v93 source-local AV1 decoder soft reset endpoint=",
-                    p.endpointId,
-                    " source=",
-                    packet.sourceName,
-                    " type=",
-                    packet.videoType,
-                    " noDecodedUnits=",
-                    p.av1EncodedUnitsWithoutDecodedFrame,
-                    " sinceDecodedMs=",
-                    sinceDecodedMs,
-                    " resets=",
-                    p.av1DecoderSoftResets
-                );
-                p.av1Decoder.reset();
-                p.av1EncodedUnitsWithoutDecodedFrame = 0;
-                p.lastAv1SoftResetAt = now;
             }
         }
 
@@ -881,9 +832,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 packet.packetIndex,
                 " producedFrames=",
                 frames.size(),
-                " decodedFrames=",
-                decodedFrameCount,
-                " v93Worker=1"
+                " v92Worker=1"
             );
         }
         return;
@@ -903,7 +852,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 static_cast<int>(packet.payloadType),
                 " dropped=",
                 dropped,
-                " v93Worker=1"
+                " v92Worker=1"
             );
         }
         return;
@@ -924,7 +873,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
             packet.packetIndex,
             " pt=",
             static_cast<int>(packet.payloadType),
-            " v93Worker=1"
+            " v92Worker=1"
         );
     }
 }
@@ -1093,7 +1042,7 @@ void PerParticipantNdiRouter::handleRtp(
                 rtp.payloadSize,
                 " ssrc=",
                 rtp.ssrc,
-                " v93Queued=1"
+                " v92Queued=1"
             );
         }
 

@@ -1029,9 +1029,10 @@ std::string makeReceiverVideoConstraintsMessage(
     int maxHeight
 ) {
     /*
-        v93 stability mode:
+        v86 stability mode:
         - Screen-share/desktop sources remain separate NDI sources and stay at 1080p / 30fps.
-        - Camera sources are also requested at 1080p / 30fps again.
+        - Camera sources are requested at 720p / 30fps to reduce decode pressure while two
+          screen-shares are active.
         - onStageSources remains empty to avoid over-prioritizing every stream at once.
     */
     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
@@ -1054,8 +1055,9 @@ std::string makeReceiverVideoConstraintsMessage(
             out << ",";
         }
 
-        const int sourceMaxHeight = maxHeight;
-        const double sourceMaxFrameRate = 30.0; // v93: keep screen-share and cameras at 1080p/30fps.
+        const bool desktop = isLikelyDesktopVideoSource(realSources[i]);
+        const int sourceMaxHeight = desktop ? maxHeight : 720;
+        const double sourceMaxFrameRate = 30.0; // v86: keep screen-share and cameras at 30fps; only camera height is capped.
 
         out
             << "\""
@@ -1120,7 +1122,7 @@ void sendReceiverVideoConstraints(
             const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastConstraintsSentAt).count();
             if (sinceMs < 5000) {
                 Logger::info(
-                    "NativeWebRTCAnswerer: v93 skipped duplicate ReceiverVideoConstraints, reason=",
+                    "NativeWebRTCAnswerer: v90 skipped duplicate ReceiverVideoConstraints, reason=",
                     reason,
                     " sinceMs=",
                     sinceMs
@@ -1137,7 +1139,7 @@ void sendReceiverVideoConstraints(
     sendLastNUnlimited(channel, reason);
 
     Logger::info(
-        "NativeWebRTCAnswerer: requesting v93 selected-only constraints: total video receive cap 6.7Mbps, screen 1080p/30fps, camera 1080p/30fps, realSources=",
+        "NativeWebRTCAnswerer: requesting v90 selected-only constraints: total video receive cap 6.7Mbps, screen 1080p/30fps, camera 720p/30fps, realSources=",
         realSources.size(),
         " reason=",
         reason
@@ -1146,7 +1148,7 @@ void sendReceiverVideoConstraints(
     sendBridgeMessage(
         channel,
         constraintsMessage,
-        "ReceiverVideoConstraints/v93-cap6700kbps-screen1080p30-camera1080p30-local-smooth/" + reason
+        "ReceiverVideoConstraints/v90-cap6700kbps-screen1080p30-camera720p30-async-ndi/" + reason
     );
 }
 void sendReceiverAudioSubscriptionInclude(
@@ -1439,7 +1441,7 @@ NativeWebRTCAnswerer::NativeWebRTCAnswerer()
         }
     });
 
-    Logger::info("NativeWebRTCAnswerer: v93 AV1 receive enabled; 6.7Mbps cap, screen 1080p/30fps, camera 1080p/30fps, per-source workers, source-local decoder smoothing; global reconnect disabled");
+    Logger::info("NativeWebRTCAnswerer: v92 AV1 receive enabled; 6.7Mbps cap, screen 1080p/30fps, camera 720p/30fps, async NDI queue; global reconnect disabled");
 }
 
 NativeWebRTCAnswerer::~NativeWebRTCAnswerer() {
@@ -1496,11 +1498,11 @@ void NativeWebRTCAnswerer::notifySessionFailureOnce(std::uint64_t generation, co
     }
 
     Logger::warn(
-        "NativeWebRTCAnswerer: v93 ignoring global signaling reconnect request; reason=",
+        "NativeWebRTCAnswerer: v92 ignoring global signaling reconnect request; reason=",
         reason
     );
 
-    // v93 intentionally does not call the outer reconnect callback. One bad
+    // v92 intentionally does not call the outer reconnect callback. One bad
     // source should not tear down every NDI output.
     (void)cb;
 #else
@@ -1791,7 +1793,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         Logger::info("NativeWebRTCAnswerer: PeerConnection state=", numericState);
 
         if (numericState == 4 || numericState == 5) {
-            Logger::warn("NativeWebRTCAnswerer: v93: WebRTC PeerConnection failed/closed; global reconnect is disabled for source-local stability testing");
+            Logger::warn("NativeWebRTCAnswerer: v92: WebRTC PeerConnection failed/closed; global reconnect is disabled for source-local stability testing");
         }
     });
 
@@ -1852,11 +1854,11 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
 
         bridgeChannel->onClosed([]() {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed; v93 keeps current NDI sources and does not force a global reconnect");
+            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed; v92 keeps current NDI sources and does not force a global reconnect");
         });
 
         bridgeChannel->onError([](std::string error) {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v93 does not force a global reconnect");
+            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v92 does not force a global reconnect");
         });
 
         bridgeChannel->onMessage([

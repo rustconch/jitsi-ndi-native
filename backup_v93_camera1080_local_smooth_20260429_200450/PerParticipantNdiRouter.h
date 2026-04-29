@@ -9,7 +9,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -71,11 +70,6 @@ private:
         bool videoWorkerStarted = false;
         std::uint64_t droppedQueuedVideoRtp = 0;
         std::uint64_t processedVideoRtp = 0;
-        std::uint64_t decodedAv1Frames = 0;
-        std::uint64_t av1EncodedUnitsWithoutDecodedFrame = 0;
-        std::uint64_t av1DecoderSoftResets = 0;
-        std::chrono::steady_clock::time_point lastAv1DecodedFrameAt{};
-        std::chrono::steady_clock::time_point lastAv1SoftResetAt{};
     };
 
     ParticipantPipeline& pipelineForLocked(const JitsiSourceInfo& source);

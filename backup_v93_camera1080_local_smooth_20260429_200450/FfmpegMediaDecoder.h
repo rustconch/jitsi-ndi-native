@@ -16,7 +16,6 @@ public:
     FfmpegVp8Decoder& operator=(const FfmpegVp8Decoder&) = delete;
 
     std::vector<DecodedVideoFrameBGRA> decode(const EncodedVideoFrame& frame);
-    void reset();
 
 private:
     struct Impl;
@@ -31,7 +30,6 @@ public:
     FfmpegAv1Decoder& operator=(const FfmpegAv1Decoder&) = delete;
 
     std::vector<DecodedVideoFrameBGRA> decode(const EncodedVideoFrame& frame);
-    void reset();
 
 private:
     struct Impl;

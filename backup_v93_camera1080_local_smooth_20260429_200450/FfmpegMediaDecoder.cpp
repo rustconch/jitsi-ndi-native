@@ -182,37 +182,6 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
 
     return out;
 }
-
-void resetVideoDecoderBuffers(
-    AVCodecContext* dec,
-    AVFrame* frame,
-    SwsContext*& sws,
-    int& swsW,
-    int& swsH,
-    AVPixelFormat& swsFmt,
-    const char* label
-) {
-    if (dec) {
-        avcodec_flush_buffers(dec);
-    }
-    if (frame) {
-        av_frame_unref(frame);
-    }
-    if (sws) {
-        sws_freeContext(sws);
-        sws = nullptr;
-    }
-    swsW = 0;
-    swsH = 0;
-    swsFmt = AV_PIX_FMT_NONE;
-
-    Logger::warn(
-        "FfmpegMediaDecoder: v93 flushed ",
-        label ? label : "video",
-        " decoder buffers after source-local AV1 stall"
-    );
-}
-
 } // namespace
 
 struct FfmpegVp8Decoder::Impl {
@@ -243,10 +212,6 @@ std::vector<DecodedVideoFrameBGRA> FfmpegVp8Decoder::decode(const EncodedVideoFr
     return decodeVideoPacket(impl_->dec, impl_->frame, impl_->sws, impl_->swsW, impl_->swsH, impl_->swsFmt, encoded);
 }
 
-void FfmpegVp8Decoder::reset() {
-    resetVideoDecoderBuffers(impl_->dec, impl_->frame, impl_->sws, impl_->swsW, impl_->swsH, impl_->swsFmt, "VP8");
-}
-
 struct FfmpegAv1Decoder::Impl {
     AVCodecContext* dec = nullptr;
     AVFrame* frame = nullptr;
@@ -273,10 +238,6 @@ FfmpegAv1Decoder::~FfmpegAv1Decoder() = default;
 
 std::vector<DecodedVideoFrameBGRA> FfmpegAv1Decoder::decode(const EncodedVideoFrame& encoded) {
     return decodeVideoPacket(impl_->dec, impl_->frame, impl_->sws, impl_->swsW, impl_->swsH, impl_->swsFmt, encoded);
-}
-
-void FfmpegAv1Decoder::reset() {
-    resetVideoDecoderBuffers(impl_->dec, impl_->frame, impl_->sws, impl_->swsW, impl_->swsH, impl_->swsFmt, "AV1");
 }
 
 struct FfmpegOpusDecoder::Impl {
