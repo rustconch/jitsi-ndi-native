@@ -1024,85 +1024,17 @@ std::string makeReceiverAudioSubscriptionIncludeMessage(const std::vector<std::s
     return out.str();
 }
 
-std::string videoEndpointPrefixForConstraints(const std::string& sourceName) {
-    const auto dashV = sourceName.rfind("-v");
-    if (dashV == std::string::npos) {
-        return {};
-    }
-
-    bool allDigits = true;
-    for (std::size_t i = dashV + 2; i < sourceName.size(); ++i) {
-        if (!std::isdigit(static_cast<unsigned char>(sourceName[i]))) {
-            allDigits = false;
-            break;
-        }
-    }
-
-    if (!allDigits) {
-        return {};
-    }
-
-    return sourceName.substr(0, dashV);
-}
-
-bool looksLikePrimaryCameraSourceForConstraints(const std::string& sourceName) {
-    return sourceName.size() > 3
-        && sourceName.rfind("-v0") == sourceName.size() - 3;
-}
-
-bool endpointHasAdditionalVideoSourceForConstraints(
-    const std::vector<std::string>& realSources,
-    const std::string& endpointPrefix
-) {
-    if (endpointPrefix.empty()) {
-        return false;
-    }
-
-    const std::string prefix = endpointPrefix + "-v";
-    for (const auto& source : realSources) {
-        if (source.rfind(prefix, 0) == 0 && !looksLikePrimaryCameraSourceForConstraints(source)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-std::size_t countCameraSourcesForConstraints(const std::vector<std::string>& realSources) {
-    std::size_t count = 0;
-    for (const auto& source : realSources) {
-        if (looksLikePrimaryCameraSourceForConstraints(source)) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-std::size_t countProtectedCameraSourcesForConstraints(const std::vector<std::string>& realSources) {
-    std::size_t count = 0;
-    for (const auto& source : realSources) {
-        if (looksLikePrimaryCameraSourceForConstraints(source)
-            && endpointHasAdditionalVideoSourceForConstraints(realSources, videoEndpointPrefixForConstraints(source))) {
-            ++count;
-        }
-    }
-    return count;
-}
-
 std::string makeReceiverVideoConstraintsMessage(
     const std::vector<std::string>& sourceNames,
     int maxHeight
 ) {
     /*
-        v95 same-device protection mode:
-        - Keep NDI sources separate and keep screen-share requests at 1080p / 30fps.
-        - Keep ordinary cameras at 1080p / 30fps.
-        - If one endpoint publishes both camera (-v0) and another video source (-v1, usually desktop),
-          cap only that endpoint camera to 720p. This protects the case where the participant
-          is in the browser on the same computer that runs this native receiver. It reduces local
-          camera/screen/decoder pressure without lowering screen-share fps to 15.
-        - selectedSources/onStageSources stay empty so the technical receiver does not steal focus
-          or disturb normal Jitsi clients.
+        v94 observer-safe stability mode:
+        - Screen-share/desktop sources remain separate NDI sources and stay at 1080p / 30fps.
+        - Camera sources are requested at 1080p / 30fps, but the request is less aggressive.
+        - selectedSources/onStageSources stay empty so our technical receiver does not mark every
+          remote stream as selected/on-stage and does not disturb normal Jitsi clients.
+        - The old LastNChangedEvent is not sent anymore; only ReceiverVideoConstraints is sent.
     */
     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
     const int lastN = -1;
@@ -1116,7 +1048,7 @@ std::string makeReceiverVideoConstraintsMessage(
     out << "\"assumedBandwidthBps\":6000000,";
     out << "\"selectedSources\":" << jsonStringArray(emptyOnStageSources) << ",";
     out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
-    out << "\"defaultConstraints\":{\"maxHeight\":720,\"maxFrameRate\":30.0},";
+    out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
     out << "\"constraints\":{";
 
     for (std::size_t i = 0; i < realSources.size(); ++i) {
@@ -1124,17 +1056,8 @@ std::string makeReceiverVideoConstraintsMessage(
             out << ",";
         }
 
-        int sourceMaxHeight = maxHeight;
-        const double sourceMaxFrameRate = 30.0;
-
-        const std::string endpointPrefix = videoEndpointPrefixForConstraints(realSources[i]);
-        const bool protectCameraBecauseEndpointAlsoSharesScreen =
-            looksLikePrimaryCameraSourceForConstraints(realSources[i])
-            && endpointHasAdditionalVideoSourceForConstraints(realSources, endpointPrefix);
-
-        if (protectCameraBecauseEndpointAlsoSharesScreen) {
-            sourceMaxHeight = 720;
-        }
+        const int sourceMaxHeight = maxHeight;
+        const double sourceMaxFrameRate = 30.0; // v94: keep requested output at 1080p/30fps without selected-source priority.
 
         out
             << "\""
@@ -1199,7 +1122,7 @@ void sendReceiverVideoConstraints(
             const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastConstraintsSentAt).count();
             if (sinceMs < 12000) {
                 Logger::info(
-                    "NativeWebRTCAnswerer: v95 skipped duplicate ReceiverVideoConstraints, reason=",
+                    "NativeWebRTCAnswerer: v94 skipped duplicate ReceiverVideoConstraints, reason=",
                     reason,
                     " sinceMs=",
                     sinceMs
@@ -1214,17 +1137,13 @@ void sendReceiverVideoConstraints(
     }
 
     Logger::info(
-        "NativeWebRTCAnswerer: v95 not sending legacy LastNChangedEvent; observer-safe ReceiverVideoConstraints only, reason=",
+        "NativeWebRTCAnswerer: v94 not sending legacy LastNChangedEvent; observer-safe ReceiverVideoConstraints only, reason=",
         reason
     );
 
     Logger::info(
-        "NativeWebRTCAnswerer: requesting v95 same-device-safe constraints: total video receive cap 6.0Mbps, screen 1080p/30fps, ordinary cameras 1080p/30fps, camera+screen endpoint camera 720p/30fps, selectedSources empty, realSources=",
+        "NativeWebRTCAnswerer: requesting v94 observer-safe constraints: total video receive cap 6.0Mbps, screen/camera 1080p/30fps, selectedSources empty, realSources=",
         realSources.size(),
-        " cameras=",
-        countCameraSourcesForConstraints(realSources),
-        " protectedCameraSources=",
-        countProtectedCameraSourcesForConstraints(realSources),
         " reason=",
         reason
     );
@@ -1232,7 +1151,7 @@ void sendReceiverVideoConstraints(
     sendBridgeMessage(
         channel,
         constraintsMessage,
-        "ReceiverVideoConstraints/v95-same-device-protect-cap6000kbps-screen1080-cameraadaptive30-local-smooth/" + reason
+        "ReceiverVideoConstraints/v94-observer-safe-cap6000kbps-1080p30-local-smooth/" + reason
     );
 }
 void sendReceiverAudioSubscriptionInclude(
@@ -1525,7 +1444,7 @@ NativeWebRTCAnswerer::NativeWebRTCAnswerer()
         }
     });
 
-    Logger::info("NativeWebRTCAnswerer: v95 AV1 receive enabled; same-device protection enabled; selectedSources empty, no legacy LastNChangedEvent, screen 1080p/30fps, ordinary cameras 1080p/30fps, camera+screen endpoint camera capped to 720p; per-source workers; global reconnect disabled");
+    Logger::info("NativeWebRTCAnswerer: v94 AV1 receive enabled; observer-safe 6.0Mbps cap, selectedSources empty, no legacy LastNChangedEvent, screen/camera 1080p/30fps, per-source workers, camera stale-drop smoothing; global reconnect disabled");
 }
 
 NativeWebRTCAnswerer::~NativeWebRTCAnswerer() {
@@ -1582,11 +1501,11 @@ void NativeWebRTCAnswerer::notifySessionFailureOnce(std::uint64_t generation, co
     }
 
     Logger::warn(
-        "NativeWebRTCAnswerer: v95 ignoring global signaling reconnect request; reason=",
+        "NativeWebRTCAnswerer: v94 ignoring global signaling reconnect request; reason=",
         reason
     );
 
-    // v95 intentionally does not call the outer reconnect callback. One bad
+    // v94 intentionally does not call the outer reconnect callback. One bad
     // source should not tear down every NDI output.
     (void)cb;
 #else
@@ -1877,7 +1796,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         Logger::info("NativeWebRTCAnswerer: PeerConnection state=", numericState);
 
         if (numericState == 4 || numericState == 5) {
-            Logger::warn("NativeWebRTCAnswerer: v95: WebRTC PeerConnection failed/closed; global reconnect is disabled for observer-safe/source-local stability testing");
+            Logger::warn("NativeWebRTCAnswerer: v94: WebRTC PeerConnection failed/closed; global reconnect is disabled for observer-safe/source-local stability testing");
         }
     });
 
@@ -1938,11 +1857,11 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
 
         bridgeChannel->onClosed([]() {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed; v95 keeps current NDI sources and does not force a global reconnect");
+            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed; v94 keeps current NDI sources and does not force a global reconnect");
         });
 
         bridgeChannel->onError([](std::string error) {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v95 does not force a global reconnect");
+            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v94 does not force a global reconnect");
         });
 
         bridgeChannel->onMessage([

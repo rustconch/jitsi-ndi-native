@@ -99,7 +99,7 @@ int runApp(int argc, char** argv) {
 
         Logger::info("WebRTC native receiver started");
         Logger::info("Running Jitsi XMPP bootstrap + per-participant NDI media router. Press Ctrl+C to stop.");
-        Logger::info("v95: global reconnect watchdog disabled; observer-safe join + camera stale-drop + source-local AV1 decoder reset");
+        Logger::info("v94: global reconnect watchdog disabled; observer-safe join + camera stale-drop + source-local AV1 decoder reset");
 
         auto lastLog = std::chrono::steady_clock::now();
         std::uint64_t lastAudioPackets = signaling.audioPackets();
