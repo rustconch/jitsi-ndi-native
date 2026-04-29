@@ -1,4 +1,4 @@
-#include "FfmpegMediaDecoder.h"
+﻿#include "FfmpegMediaDecoder.h"
 #include "Logger.h"
 
 extern "C" {
@@ -13,8 +13,6 @@ extern "C" {
 }
 
 #include <algorithm>
-#include <cstdarg>
-#include <cstdio>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -25,32 +23,6 @@ extern "C" {
 #include <vector>
 
 namespace {
-
-
-void filteredAvLogCallback(void* ptr, int level, const char* fmt, va_list vl) {
-    char buffer[1024]{};
-    va_list copy;
-    va_copy(copy, vl);
-    std::vsnprintf(buffer, sizeof(buffer), fmt ? fmt : "", copy);
-    va_end(copy);
-
-    const std::string message(buffer);
-    if (message.find("Error parsing OBU data") != std::string::npos ||
-        message.find("Error parsing frame header") != std::string::npos) {
-        return;
-    }
-
-    av_log_default_callback(ptr, level, fmt, vl);
-}
-
-void installFfmpegLogFilterOnce() {
-    static bool installed = false;
-    if (!installed) {
-        installed = true;
-        av_log_set_callback(filteredAvLogCallback);
-        Logger::info("FfmpegMediaDecoder: v94 installed FFmpeg log filter for transient libdav1d OBU parse noise");
-    }
-}
 
 void throwIfNeg(int rc, const char* what) {
     if (rc >= 0) return;
@@ -92,7 +64,6 @@ const AVCodec* findDecoder(AVCodecID id) {
 }
 
 AVCodecContext* openDecoder(AVCodecID id) {
-    installFfmpegLogFilterOnce();
     const AVCodec* codec = findDecoder(id);
     if (!codec) throw std::runtime_error("FFmpeg decoder not found");
 
@@ -236,7 +207,7 @@ void resetVideoDecoderBuffers(
     swsFmt = AV_PIX_FMT_NONE;
 
     Logger::warn(
-        "FfmpegMediaDecoder: v94 flushed ",
+        "FfmpegMediaDecoder: v93 flushed ",
         label ? label : "video",
         " decoder buffers after source-local AV1 stall"
     );

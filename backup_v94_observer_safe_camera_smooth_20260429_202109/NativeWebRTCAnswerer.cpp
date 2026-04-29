@@ -1029,12 +1029,10 @@ std::string makeReceiverVideoConstraintsMessage(
     int maxHeight
 ) {
     /*
-        v94 observer-safe stability mode:
+        v93 stability mode:
         - Screen-share/desktop sources remain separate NDI sources and stay at 1080p / 30fps.
-        - Camera sources are requested at 1080p / 30fps, but the request is less aggressive.
-        - selectedSources/onStageSources stay empty so our technical receiver does not mark every
-          remote stream as selected/on-stage and does not disturb normal Jitsi clients.
-        - The old LastNChangedEvent is not sent anymore; only ReceiverVideoConstraints is sent.
+        - Camera sources are also requested at 1080p / 30fps again.
+        - onStageSources remains empty to avoid over-prioritizing every stream at once.
     */
     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
     const int lastN = -1;
@@ -1045,8 +1043,8 @@ std::string makeReceiverVideoConstraintsMessage(
     out << "{";
     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
     out << "\"lastN\":" << lastN << ",";
-    out << "\"assumedBandwidthBps\":6000000,";
-    out << "\"selectedSources\":" << jsonStringArray(emptyOnStageSources) << ",";
+    out << "\"assumedBandwidthBps\":6700000,";
+    out << "\"selectedSources\":" << jsonStringArray(realSources) << ",";
     out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
     out << "\"constraints\":{";
@@ -1057,7 +1055,7 @@ std::string makeReceiverVideoConstraintsMessage(
         }
 
         const int sourceMaxHeight = maxHeight;
-        const double sourceMaxFrameRate = 30.0; // v94: keep requested output at 1080p/30fps without selected-source priority.
+        const double sourceMaxFrameRate = 30.0; // v93: keep screen-share and cameras at 1080p/30fps.
 
         out
             << "\""
@@ -1120,9 +1118,9 @@ void sendReceiverVideoConstraints(
         std::lock_guard<std::mutex> debounceLock(debounceMutex);
         if (haveLastConstraints && constraintsMessage == lastConstraintsMessage) {
             const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastConstraintsSentAt).count();
-            if (sinceMs < 12000) {
+            if (sinceMs < 5000) {
                 Logger::info(
-                    "NativeWebRTCAnswerer: v94 skipped duplicate ReceiverVideoConstraints, reason=",
+                    "NativeWebRTCAnswerer: v93 skipped duplicate ReceiverVideoConstraints, reason=",
                     reason,
                     " sinceMs=",
                     sinceMs
@@ -1136,13 +1134,10 @@ void sendReceiverVideoConstraints(
         lastConstraintsSentAt = now;
     }
 
-    Logger::info(
-        "NativeWebRTCAnswerer: v94 not sending legacy LastNChangedEvent; observer-safe ReceiverVideoConstraints only, reason=",
-        reason
-    );
+    sendLastNUnlimited(channel, reason);
 
     Logger::info(
-        "NativeWebRTCAnswerer: requesting v94 observer-safe constraints: total video receive cap 6.0Mbps, screen/camera 1080p/30fps, selectedSources empty, realSources=",
+        "NativeWebRTCAnswerer: requesting v93 selected-only constraints: total video receive cap 6.7Mbps, screen 1080p/30fps, camera 1080p/30fps, realSources=",
         realSources.size(),
         " reason=",
         reason
@@ -1151,7 +1146,7 @@ void sendReceiverVideoConstraints(
     sendBridgeMessage(
         channel,
         constraintsMessage,
-        "ReceiverVideoConstraints/v94-observer-safe-cap6000kbps-1080p30-local-smooth/" + reason
+        "ReceiverVideoConstraints/v93-cap6700kbps-screen1080p30-camera1080p30-local-smooth/" + reason
     );
 }
 void sendReceiverAudioSubscriptionInclude(
@@ -1444,7 +1439,7 @@ NativeWebRTCAnswerer::NativeWebRTCAnswerer()
         }
     });
 
-    Logger::info("NativeWebRTCAnswerer: v94 AV1 receive enabled; observer-safe 6.0Mbps cap, selectedSources empty, no legacy LastNChangedEvent, screen/camera 1080p/30fps, per-source workers, camera stale-drop smoothing; global reconnect disabled");
+    Logger::info("NativeWebRTCAnswerer: v93 AV1 receive enabled; 6.7Mbps cap, screen 1080p/30fps, camera 1080p/30fps, per-source workers, source-local decoder smoothing; global reconnect disabled");
 }
 
 NativeWebRTCAnswerer::~NativeWebRTCAnswerer() {
@@ -1501,11 +1496,11 @@ void NativeWebRTCAnswerer::notifySessionFailureOnce(std::uint64_t generation, co
     }
 
     Logger::warn(
-        "NativeWebRTCAnswerer: v94 ignoring global signaling reconnect request; reason=",
+        "NativeWebRTCAnswerer: v93 ignoring global signaling reconnect request; reason=",
         reason
     );
 
-    // v94 intentionally does not call the outer reconnect callback. One bad
+    // v93 intentionally does not call the outer reconnect callback. One bad
     // source should not tear down every NDI output.
     (void)cb;
 #else
@@ -1796,7 +1791,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         Logger::info("NativeWebRTCAnswerer: PeerConnection state=", numericState);
 
         if (numericState == 4 || numericState == 5) {
-            Logger::warn("NativeWebRTCAnswerer: v94: WebRTC PeerConnection failed/closed; global reconnect is disabled for observer-safe/source-local stability testing");
+            Logger::warn("NativeWebRTCAnswerer: v93: WebRTC PeerConnection failed/closed; global reconnect is disabled for source-local stability testing");
         }
     });
 
@@ -1857,11 +1852,11 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
         });
 
         bridgeChannel->onClosed([]() {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed; v94 keeps current NDI sources and does not force a global reconnect");
+            Logger::warn("NativeWebRTCAnswerer: bridge datachannel closed; v93 keeps current NDI sources and does not force a global reconnect");
         });
 
         bridgeChannel->onError([](std::string error) {
-            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v94 does not force a global reconnect");
+            Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v93 does not force a global reconnect");
         });
 
         bridgeChannel->onMessage([

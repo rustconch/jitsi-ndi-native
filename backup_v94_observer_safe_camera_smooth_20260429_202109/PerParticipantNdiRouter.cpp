@@ -670,7 +670,7 @@ void PerParticipantNdiRouter::startVideoWorkerLocked(ParticipantPipeline& pipeli
     pipeline.videoThread = std::thread(&PerParticipantNdiRouter::videoWorkerLoop, this, &pipeline);
 
     Logger::info(
-        "PerParticipantNdiRouter: v94 per-source video worker started endpoint=",
+        "PerParticipantNdiRouter: v93 per-source video worker started endpoint=",
         pipeline.endpointId
     );
 }
@@ -700,14 +700,12 @@ void PerParticipantNdiRouter::stopVideoWorker(ParticipantPipeline& pipeline) {
     }
 
     Logger::info(
-        "PerParticipantNdiRouter: v94 per-source video worker stopped endpoint=",
+        "PerParticipantNdiRouter: v93 per-source video worker stopped endpoint=",
         pipeline.endpointId,
         " processed=",
         pipeline.processedVideoRtp,
         " droppedQueued=",
-        pipeline.droppedQueuedVideoRtp,
-        " droppedStale=",
-        pipeline.droppedStaleVideoRtp
+        pipeline.droppedQueuedVideoRtp
     );
 }
 
@@ -738,15 +736,11 @@ void PerParticipantNdiRouter::enqueueVideoRtpLocked(
     queued.acceptedAv1 = acceptedAv1;
     queued.acceptedVp8 = acceptedVp8;
     queued.packetIndex = pipeline.videoPackets;
-    queued.queuedAt = std::chrono::steady_clock::now();
 
-    // v94: per-source queue, not global queue. Cameras get a much smaller queue
-    // than screen-share sources so one unstable camera drops old RTP and catches up
-    // instead of freezing for several seconds. Desktop keeps a larger queue because
-    // screen-share bursts are normal and were working well in v93.
-    const bool isDesktop = source.videoType == "desktop";
-    const std::size_t kMaxVideoQueuePacketsPerSource = isDesktop ? 280u : 120u;
-    const std::size_t kTargetVideoQueuePacketsPerSource = isDesktop ? 170u : 45u;
+    // Per-source queue, not global queue. If one camera/source is too heavy, only
+    // that source drops old RTP and soft-resyncs; other cameras/screens keep moving.
+    constexpr std::size_t kMaxVideoQueuePacketsPerSource = 260;
+    constexpr std::size_t kTargetVideoQueuePacketsPerSource = 160;
 
     std::uint64_t droppedNow = 0;
     std::size_t queuedSize = 0;
@@ -768,7 +762,7 @@ void PerParticipantNdiRouter::enqueueVideoRtpLocked(
 
     if (droppedNow > 0) {
         Logger::warn(
-            "PerParticipantNdiRouter: v94 source-local video queue overload endpoint=",
+            "PerParticipantNdiRouter: v93 source-local video queue overload endpoint=",
             pipeline.endpointId,
             " droppedOldRtp=",
             droppedNow,
@@ -779,9 +773,7 @@ void PerParticipantNdiRouter::enqueueVideoRtpLocked(
             " source=",
             source.sourceName,
             " type=",
-            source.videoType,
-            " maxQueue=",
-            kMaxVideoQueuePacketsPerSource
+            source.videoType
         );
     }
 
@@ -807,34 +799,6 @@ void PerParticipantNdiRouter::videoWorkerLoop(ParticipantPipeline* pipeline) {
 
             packet = std::move(pipeline->videoQueue.front());
             pipeline->videoQueue.pop_front();
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        const bool isDesktop = packet.videoType == "desktop";
-        const long long maxQueueAgeMs = isDesktop ? 900LL : 330LL;
-        const long long ageMs = packet.queuedAt.time_since_epoch().count() == 0
-            ? 0LL
-            : std::chrono::duration_cast<std::chrono::milliseconds>(now - packet.queuedAt).count();
-
-        if (ageMs > maxQueueAgeMs) {
-            ++pipeline->droppedStaleVideoRtp;
-            if (pipeline->droppedStaleVideoRtp <= 5 || (pipeline->droppedStaleVideoRtp % 100) == 0) {
-                Logger::warn(
-                    "PerParticipantNdiRouter: v94 dropped stale queued video RTP endpoint=",
-                    pipeline->endpointId,
-                    " source=",
-                    packet.sourceName,
-                    " type=",
-                    packet.videoType,
-                    " ageMs=",
-                    ageMs,
-                    " maxAgeMs=",
-                    maxQueueAgeMs,
-                    " totalDroppedStale=",
-                    pipeline->droppedStaleVideoRtp
-                );
-            }
-            continue;
         }
 
         processQueuedVideoRtp(*pipeline, packet);
@@ -881,21 +845,16 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 : std::chrono::duration_cast<std::chrono::milliseconds>(now - p.lastAv1SoftResetAt).count();
 
             /*
-                v94: source-local decoder smoothing.
+                v93: source-local decoder smoothing.
                 When one camera temporarily stops producing decoded frames while RTP/AV1 temporal
                 units still arrive, do not reconnect the whole conference. Flush only this source's
                 FFmpeg AV1 decoder. This is deliberately conservative: it triggers after several
                 encoded units and more than ~1.5 s since the last decoded frame, with a cooldown.
             */
-            const bool isDesktop = packet.videoType == "desktop";
-            const std::uint64_t noDecodedThreshold = isDesktop ? 30ULL : 12ULL;
-            const long long stallMsThreshold = isDesktop ? 1500LL : 750LL;
-            const long long resetCooldownMs = isDesktop ? 3000LL : 1800LL;
-
-            if (p.av1EncodedUnitsWithoutDecodedFrame >= noDecodedThreshold && sinceDecodedMs >= stallMsThreshold && sinceResetMs >= resetCooldownMs) {
+            if (p.av1EncodedUnitsWithoutDecodedFrame >= 30 && sinceDecodedMs >= 1500 && sinceResetMs >= 3000) {
                 ++p.av1DecoderSoftResets;
                 Logger::warn(
-                    "PerParticipantNdiRouter: v94 source-local AV1 decoder soft reset endpoint=",
+                    "PerParticipantNdiRouter: v93 source-local AV1 decoder soft reset endpoint=",
                     p.endpointId,
                     " source=",
                     packet.sourceName,
@@ -905,13 +864,10 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                     p.av1EncodedUnitsWithoutDecodedFrame,
                     " sinceDecodedMs=",
                     sinceDecodedMs,
-                    " thresholdMs=",
-                    stallMsThreshold,
                     " resets=",
                     p.av1DecoderSoftResets
                 );
                 p.av1Decoder.reset();
-                p.av1.forceSequenceHeaderOnNextFrame();
                 p.av1EncodedUnitsWithoutDecodedFrame = 0;
                 p.lastAv1SoftResetAt = now;
             }
@@ -927,7 +883,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 frames.size(),
                 " decodedFrames=",
                 decodedFrameCount,
-                " v94Worker=1"
+                " v93Worker=1"
             );
         }
         return;
@@ -947,7 +903,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 static_cast<int>(packet.payloadType),
                 " dropped=",
                 dropped,
-                " v94Worker=1"
+                " v93Worker=1"
             );
         }
         return;
@@ -968,7 +924,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
             packet.packetIndex,
             " pt=",
             static_cast<int>(packet.payloadType),
-            " v94Worker=1"
+            " v93Worker=1"
         );
     }
 }
@@ -1137,7 +1093,7 @@ void PerParticipantNdiRouter::handleRtp(
                 rtp.payloadSize,
                 " ssrc=",
                 rtp.ssrc,
-                " v94Queued=1"
+                " v93Queued=1"
             );
         }
 

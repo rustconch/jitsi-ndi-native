@@ -48,7 +48,6 @@ private:
         bool acceptedAv1 = false;
         bool acceptedVp8 = false;
         std::uint64_t packetIndex = 0;
-        std::chrono::steady_clock::time_point queuedAt{};
     };
 
     struct ParticipantPipeline {
@@ -71,7 +70,6 @@ private:
         bool videoStopRequested = false;
         bool videoWorkerStarted = false;
         std::uint64_t droppedQueuedVideoRtp = 0;
-        std::uint64_t droppedStaleVideoRtp = 0;
         std::uint64_t processedVideoRtp = 0;
         std::uint64_t decodedAv1Frames = 0;
         std::uint64_t av1EncodedUnitsWithoutDecodedFrame = 0;

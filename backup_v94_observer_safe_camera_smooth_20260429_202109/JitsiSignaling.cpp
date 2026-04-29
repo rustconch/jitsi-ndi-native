@@ -1,4 +1,4 @@
-﻿#include "JitsiSignaling.h"
+#include "JitsiSignaling.h"
 
 
 #include <algorithm>
@@ -373,9 +373,9 @@ void JitsiSignaling::sendConferenceRequest() {
         << "<property name='supports-receive-multiple-streams' value='true'/>"
         << "<property name='supports-colibri-websocket' value='true'/>"
         << "<property name='openSctp' value='true'/>"
-        << "<property name='startSilent' value='true'/>"
-        << "<property name='startAudioMuted' value='true'/>"
-        << "<property name='startVideoMuted' value='true'/>"
+        << "<property name='startSilent' value='false'/>"
+        << "<property name='startAudioMuted' value='false'/>"
+        << "<property name='startVideoMuted' value='false'/>"
         << "<property name='disableRtx' value='false'/>"
         << "<property name='enableLipSync' value='false'/>";
 

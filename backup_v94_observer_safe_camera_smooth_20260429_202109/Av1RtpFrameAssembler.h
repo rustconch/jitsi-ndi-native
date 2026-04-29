@@ -1,5 +1,5 @@
 #pragma once
-// AV1_LOW_OVERHEAD_V94_OBSERVER_SAFE
+// AV1_LOW_OVERHEAD_V7
 
 #include "Vp8RtpDepacketizer.h"
 
@@ -54,7 +54,6 @@ public:
     }
 
     void reset();
-    void forceSequenceHeaderOnNextFrame();
 
     std::uint64_t producedFrames() const { return producedFrames_; }
     std::uint64_t droppedUntilSequenceHeader() const { return droppedUntilSequenceHeader_; }
