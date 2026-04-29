@@ -1,4 +1,4 @@
-#include "JingleSession.h"
+﻿#include "JingleSession.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -295,7 +295,7 @@ bool isSupportedAudioCodec(const JingleCodec& codec) {
 
 bool isSupportedVideoCodec(const JingleCodec& codec) {
     const std::string codecNameLower = toLower(codec.name);
-    return codecNameLower == "av1" || codecNameLower == "vp8";
+    return codecNameLower == "vp8";
 }
 
 bool isSupportedCodecForContent(const JingleContent& c, const JingleCodec& codec) {
