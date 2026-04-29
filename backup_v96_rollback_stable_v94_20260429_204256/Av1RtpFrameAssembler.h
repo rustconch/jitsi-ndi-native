@@ -1,5 +1,5 @@
 #pragma once
-// AV1_LOW_OVERHEAD_V96_OBSERVER_SAFE
+// AV1_LOW_OVERHEAD_V95_OBSERVER_SAFE
 
 #include "Vp8RtpDepacketizer.h"
 

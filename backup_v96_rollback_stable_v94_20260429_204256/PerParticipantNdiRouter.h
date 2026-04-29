@@ -78,6 +78,7 @@ private:
         std::uint64_t av1DecoderSoftResets = 0;
         std::chrono::steady_clock::time_point lastAv1DecodedFrameAt{};
         std::chrono::steady_clock::time_point lastAv1SoftResetAt{};
+        std::chrono::steady_clock::time_point lastNdiResizeLogAt{};
     };
 
     ParticipantPipeline& pipelineForLocked(const JitsiSourceInfo& source);
