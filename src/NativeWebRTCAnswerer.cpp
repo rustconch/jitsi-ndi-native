@@ -586,22 +586,29 @@ std::vector<std::string> extractAudioSourceNamesFromSdp(const std::string& sdp) 
 
 #if JNN_WITH_NATIVE_WEBRTC
 
-void sendBridgeMessage(
+// v100: returns true only if libdatachannel actually accepted the payload.
+// Callers that maintain dedup/throttle state must use the return value so that
+// a failed send (e.g. DataChannel not open yet) does not poison the dedup state
+// and cause the next legitimate send to be skipped as a "duplicate".
+bool sendBridgeMessage(
     const std::shared_ptr<rtc::DataChannel>& channel,
     const std::string& text,
     const std::string& label
 ) {
     if (!channel) {
-        return;
+        return false;
     }
 
     try {
         channel->send(text);
         Logger::info("NativeWebRTCAnswerer: sent bridge message: ", label);
+        return true;
     } catch (const std::exception& e) {
         Logger::warn("NativeWebRTCAnswerer: failed to send bridge message ", label, ": ", e.what());
+        return false;
     } catch (...) {
         Logger::warn("NativeWebRTCAnswerer: failed to send bridge message ", label, ": unknown error");
+        return false;
     }
 }
 
@@ -1116,13 +1123,18 @@ void sendReceiverVideoConstraints(
     static bool haveLastConstraints = false;
 
     const auto now = std::chrono::steady_clock::now();
+    // v100: dedup CHECK only, do not update state yet. Updating before the actual
+    // send caused a real bug: if the DataChannel was not yet open the send fails
+    // silently, but the next attempt within 12s was skipped as "duplicate", so
+    // the bridge never received our subscription and forwardedSources stayed
+    // empty -> no video RTP. State is now updated only after a successful send.
     {
         std::lock_guard<std::mutex> debounceLock(debounceMutex);
         if (haveLastConstraints && constraintsMessage == lastConstraintsMessage) {
             const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastConstraintsSentAt).count();
             if (sinceMs < 12000) {
                 Logger::info(
-                    "NativeWebRTCAnswerer: v99 skipped duplicate ReceiverVideoConstraints, reason=",
+                    "NativeWebRTCAnswerer: v100 skipped duplicate ReceiverVideoConstraints, reason=",
                     reason,
                     " sinceMs=",
                     sinceMs
@@ -1130,29 +1142,37 @@ void sendReceiverVideoConstraints(
                 return;
             }
         }
-
-        haveLastConstraints = true;
-        lastConstraintsMessage = constraintsMessage;
-        lastConstraintsSentAt = now;
     }
 
     Logger::info(
-        "NativeWebRTCAnswerer: v99 not sending legacy LastNChangedEvent; observer-safe ReceiverVideoConstraints only, reason=",
+        "NativeWebRTCAnswerer: v100 not sending legacy LastNChangedEvent; observer-safe ReceiverVideoConstraints only, reason=",
         reason
     );
 
     Logger::info(
-        "NativeWebRTCAnswerer: requesting v99 conference-safe constraints: realistic 20Mbps observer budget, screen/camera 1080p/30fps, selectedSources empty, realSources=",
+        "NativeWebRTCAnswerer: requesting v100 conference-safe constraints: realistic 20Mbps observer budget, screen/camera 1080p/30fps, selectedSources empty, realSources=",
         realSources.size(),
         " reason=",
         reason
     );
 
-    sendBridgeMessage(
+    const bool sent = sendBridgeMessage(
         channel,
         constraintsMessage,
-        "ReceiverVideoConstraints/v99-conference-safe-20mbps-1080p30-local-smooth/" + reason
+        "ReceiverVideoConstraints/v100-conference-safe-20mbps-1080p30-local-smooth/" + reason
     );
+
+    if (sent) {
+        std::lock_guard<std::mutex> debounceLock(debounceMutex);
+        haveLastConstraints = true;
+        lastConstraintsMessage = constraintsMessage;
+        lastConstraintsSentAt = now;
+    } else {
+        Logger::warn(
+            "NativeWebRTCAnswerer: v100 ReceiverVideoConstraints send failed; dedup state NOT updated so next call can retry, reason=",
+            reason
+        );
+    }
 }
 void sendReceiverAudioSubscriptionInclude(
     const std::shared_ptr<rtc::DataChannel>& channel,
@@ -1877,10 +1897,20 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
             if (std::holds_alternative<std::string>(message)) {
                 text = std::get<std::string>(message);
 
-                Logger::info(
-                    "NativeWebRTCAnswerer: bridge datachannel text: ",
-                    text
-                );
+                // v100: filter periodic stats messages from the log. JVB sends
+                // ConnectionStats / EndpointStats every few seconds, which dominated
+                // the log without giving useful info. Real signaling events
+                // (Hello, ForwardedSources, DominantSpeaker, etc.) are still logged.
+                const bool isPeriodicStats =
+                    text.find("\"colibriClass\":\"ConnectionStats\"") != std::string::npos
+                    || text.find("\"colibriClass\":\"EndpointStats\"") != std::string::npos
+                    || text.find("\"colibriClass\":\"EndpointMessage\"") != std::string::npos;
+                if (!isPeriodicStats) {
+                    Logger::info(
+                        "NativeWebRTCAnswerer: bridge datachannel text: ",
+                        text
+                    );
+                }
             } else if (std::holds_alternative<rtc::binary>(message)) {
                 const auto& data = std::get<rtc::binary>(message);
 

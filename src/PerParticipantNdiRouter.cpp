@@ -282,7 +282,11 @@ std::string payloadSetToString(const std::set<std::uint8_t>& values) {
     return out.empty() ? "<none>" : out;
 }
 
-std::unordered_map<std::string, std::uint64_t> g_droppedUnsupportedVideoPackets;
+// v100: g_droppedUnsupportedVideoPackets removed. The previous global
+// std::unordered_map was mutated from each pipeline's video worker thread with
+// no synchronization, which was a real data race. Counter is now per-pipeline
+// (see ParticipantPipeline::droppedUnsupportedVideoByKey) and only touched from
+// that pipeline's worker, so no extra locking is required.
 
 } // namespace
 
@@ -307,7 +311,10 @@ PerParticipantNdiRouter::~PerParticipantNdiRouter() {
 
     for (auto* pipeline : toStop) {
         if (pipeline) {
+            // v100: stop both per-pipeline workers; audio worker was added so
+            // Opus decoding is no longer on the RTP receiver thread.
             stopVideoWorker(*pipeline);
+            stopAudioWorker(*pipeline);
         }
     }
 }
@@ -337,6 +344,7 @@ void PerParticipantNdiRouter::removePipelineLocked(const std::string& key, const
 
     if (it->second) {
         stopVideoWorker(*it->second);
+        stopAudioWorker(*it->second);
     }
 
     pipelines_.erase(it);
@@ -376,6 +384,7 @@ void PerParticipantNdiRouter::removeEndpointPipelinesLocked(const std::string& e
 
         if (it->second) {
             stopVideoWorker(*it->second);
+            stopAudioWorker(*it->second);
         }
 
         it = pipelines_.erase(it);
@@ -652,6 +661,11 @@ PerParticipantNdiRouter::ParticipantPipeline& PerParticipantNdiRouter::pipelineF
     );
 
     startVideoWorkerLocked(*pipeline);
+    // v100: audio worker started lazily on first audio RTP for this pipeline.
+    // Desktop/screen pipelines (bd3889b5-v1, etc.) never receive audio, so
+    // pre-starting the audio thread there was a real waste — one std::thread
+    // per pipeline that idle-blocks on the cv. enqueueAudioRtpLocked starts
+    // the worker the first time audio actually arrives.
 
     auto* ptr = pipeline.get();
     pipelines_[key] = std::move(pipeline);
@@ -709,6 +723,182 @@ void PerParticipantNdiRouter::stopVideoWorker(ParticipantPipeline& pipeline) {
         " droppedStale=",
         pipeline.droppedStaleVideoRtp
     );
+}
+
+void PerParticipantNdiRouter::startAudioWorkerLocked(ParticipantPipeline& pipeline) {
+    if (pipeline.audioWorkerStarted) {
+        return;
+    }
+
+    pipeline.audioStopRequested = false;
+    pipeline.audioWorkerStarted = true;
+    pipeline.audioThread = std::thread(&PerParticipantNdiRouter::audioWorkerLoop, this, &pipeline);
+
+    Logger::info(
+        "PerParticipantNdiRouter: v100 per-source audio worker started endpoint=",
+        pipeline.endpointId
+    );
+}
+
+void PerParticipantNdiRouter::stopAudioWorker(ParticipantPipeline& pipeline) {
+    {
+        std::lock_guard<std::mutex> lock(pipeline.audioQueueMutex);
+        if (!pipeline.audioWorkerStarted) {
+            pipeline.audioQueue.clear();
+            return;
+        }
+        pipeline.audioStopRequested = true;
+        pipeline.audioQueue.clear();
+    }
+
+    pipeline.audioQueueCv.notify_all();
+
+    if (pipeline.audioThread.joinable()) {
+        pipeline.audioThread.join();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(pipeline.audioQueueMutex);
+        pipeline.audioQueue.clear();
+        pipeline.audioStopRequested = false;
+        pipeline.audioWorkerStarted = false;
+    }
+
+    Logger::info(
+        "PerParticipantNdiRouter: v100 per-source audio worker stopped endpoint=",
+        pipeline.endpointId,
+        " processed=",
+        pipeline.processedAudioRtp,
+        " droppedQueued=",
+        pipeline.droppedQueuedAudioRtp,
+        " droppedStale=",
+        pipeline.droppedStaleAudioRtp
+    );
+}
+
+void PerParticipantNdiRouter::enqueueAudioRtpLocked(
+    ParticipantPipeline& pipeline,
+    const RtpPacketView& rtp
+) {
+    if (!rtp.payload || rtp.payloadSize == 0) {
+        return;
+    }
+
+    startAudioWorkerLocked(pipeline);
+
+    QueuedAudioRtp queued{};
+    queued.payload.assign(rtp.payload, rtp.payload + rtp.payloadSize);
+    queued.timestamp = rtp.timestamp;
+    queued.payloadType = rtp.payloadType;
+    queued.queuedAt = std::chrono::steady_clock::now();
+
+    // v100: small bound. Opus is 20ms/packet, so 80 packets = ~1.6s of buffered
+    // audio in the absolute worst case. Past that, the producer drops the oldest
+    // payload bytes. The pipeline's NDI sender has its own audio queue (16) which
+    // bounds the SDK-side buffer separately.
+    static constexpr std::size_t kMaxAudioRtpQueue = 80;
+    static constexpr std::size_t kTargetAudioRtpQueue = 32;
+
+    std::uint64_t droppedNow = 0;
+    {
+        std::lock_guard<std::mutex> lock(pipeline.audioQueueMutex);
+
+        while (pipeline.audioQueue.size() >= kMaxAudioRtpQueue) {
+            pipeline.audioQueue.pop_front();
+            ++pipeline.droppedQueuedAudioRtp;
+            ++droppedNow;
+            if (pipeline.audioQueue.size() <= kTargetAudioRtpQueue) {
+                break;
+            }
+        }
+
+        pipeline.audioQueue.push_back(std::move(queued));
+    }
+
+    if (droppedNow > 0
+        && (pipeline.droppedQueuedAudioRtp == droppedNow
+            || (pipeline.droppedQueuedAudioRtp % 200) < droppedNow)) {
+        Logger::warn(
+            "PerParticipantNdiRouter: v100 audio RTP queue overload endpoint=",
+            pipeline.endpointId,
+            " droppedOldRtp=",
+            droppedNow,
+            " totalDropped=",
+            pipeline.droppedQueuedAudioRtp,
+            " maxQueue=",
+            kMaxAudioRtpQueue
+        );
+    }
+
+    pipeline.audioQueueCv.notify_one();
+}
+
+void PerParticipantNdiRouter::audioWorkerLoop(ParticipantPipeline* pipeline) {
+    if (!pipeline) {
+        return;
+    }
+
+    for (;;) {
+        QueuedAudioRtp packet;
+        {
+            std::unique_lock<std::mutex> lock(pipeline->audioQueueMutex);
+            pipeline->audioQueueCv.wait(lock, [pipeline]() {
+                return pipeline->audioStopRequested || !pipeline->audioQueue.empty();
+            });
+
+            if (pipeline->audioStopRequested && pipeline->audioQueue.empty()) {
+                break;
+            }
+
+            packet = std::move(pipeline->audioQueue.front());
+            pipeline->audioQueue.pop_front();
+        }
+
+        // v100: stale audio (>1s) is just A/V drift, drop instead of catching up.
+        const auto now = std::chrono::steady_clock::now();
+        const long long ageMs = packet.queuedAt.time_since_epoch().count() == 0
+            ? 0LL
+            : std::chrono::duration_cast<std::chrono::milliseconds>(now - packet.queuedAt).count();
+        if (ageMs > 1000) {
+            ++pipeline->droppedStaleAudioRtp;
+            if (pipeline->droppedStaleAudioRtp <= 5 || (pipeline->droppedStaleAudioRtp % 200) == 0) {
+                Logger::warn(
+                    "PerParticipantNdiRouter: v100 dropped stale queued audio RTP endpoint=",
+                    pipeline->endpointId,
+                    " ageMs=",
+                    ageMs,
+                    " totalDroppedStale=",
+                    pipeline->droppedStaleAudioRtp
+                );
+            }
+            continue;
+        }
+
+        processQueuedAudioRtp(*pipeline, packet);
+        ++pipeline->processedAudioRtp;
+    }
+}
+
+void PerParticipantNdiRouter::processQueuedAudioRtp(
+    ParticipantPipeline& p,
+    const QueuedAudioRtp& packet
+) {
+    if (packet.payload.empty()) {
+        return;
+    }
+
+    // Opus decode + resample happen on this worker thread, off the RTP receiver
+    // thread, with no router-level mutex held. NDISender::sendAudioFrame still
+    // pushes to its own bounded queue and the NDI worker thread emits to the SDK.
+    auto frames = p.audioDecoder.decodeRtpPayload(
+        packet.payload.data(),
+        packet.payload.size(),
+        packet.timestamp
+    );
+
+    for (auto& decoded : frames) {
+        p.ndi->sendAudioFrame(std::move(decoded));
+    }
 }
 
 void PerParticipantNdiRouter::enqueueVideoRtpLocked(
@@ -857,11 +1047,13 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
         std::size_t decodedFrameCount = 0;
 
         for (const auto& encoded : frames) {
-            const auto decodedFrames = p.av1Decoder.decode(encoded);
+            // v100: move BGRA frames into the NDI sender so an Nx1080p decoded
+            // frame is not copied through std::vector when it goes to the queue.
+            auto decodedFrames = p.av1Decoder.decode(encoded);
             decodedFrameCount += decodedFrames.size();
 
-            for (const auto& decoded : decodedFrames) {
-                p.ndi->sendVideoFrame(decoded, 30, 1);
+            for (auto& decoded : decodedFrames) {
+                p.ndi->sendVideoFrame(std::move(decoded), 30, 1);
             }
         }
 
@@ -1045,7 +1237,10 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
             }
         }
 
-        if ((packet.packetIndex % 300) == 0 || !frames.empty()) {
+        // v100: log only periodically, not on every decoded frame.
+        // Previous code wrote ~60 lines/sec at 30fps × 2 sources, which scales to
+        // 600-1200 lines/sec on 10-20 participants — real CPU + log mutex load.
+        if ((packet.packetIndex % 900) == 0) {
             Logger::info(
                 "PerParticipantNdiRouter: AV1 video packets endpoint=",
                 p.endpointId,
@@ -1055,16 +1250,18 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 frames.size(),
                 " decodedFrames=",
                 decodedFrameCount,
-                " v99Worker=1"
+                " v100Worker=1"
             );
         }
         return;
     }
 
     if (!packet.acceptedVp8) {
+        // v100: per-pipeline counter. Only the video worker for this pipeline
+        // ever touches it, so no synchronization is needed.
         const std::string dropKey =
-            p.endpointId + ":ssrc-" + RtpPacket::ssrcHex(rtp.ssrc) + ":pt-" + std::to_string(packet.payloadType);
-        const auto dropped = ++g_droppedUnsupportedVideoPackets[dropKey];
+            std::string("ssrc-") + RtpPacket::ssrcHex(rtp.ssrc) + ":pt-" + std::to_string(packet.payloadType);
+        const auto dropped = ++p.droppedUnsupportedVideoByKey[dropKey];
         if (dropped == 1 || (dropped % 300) == 0) {
             Logger::warn(
                 "PerParticipantNdiRouter: dropping unsupported non-AV1/non-VP8 video RTP endpoint=",
@@ -1075,7 +1272,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 static_cast<int>(packet.payloadType),
                 " dropped=",
                 dropped,
-                " v99Worker=1"
+                " v100Worker=1"
             );
         }
         return;
@@ -1083,12 +1280,14 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
 
     auto encoded = p.vp8.push(rtp);
     if (encoded) {
-        for (const auto& decoded : p.videoDecoder.decode(*encoded)) {
-            p.ndi->sendVideoFrame(decoded, 30, 1);
+        // v100: move decoded BGRA into the NDI sender (no per-frame copy).
+        auto decodedFrames = p.videoDecoder.decode(*encoded);
+        for (auto& decoded : decodedFrames) {
+            p.ndi->sendVideoFrame(std::move(decoded), 30, 1);
         }
     }
 
-    if ((packet.packetIndex % 300) == 0) {
+    if ((packet.packetIndex % 900) == 0) {
         Logger::info(
             "PerParticipantNdiRouter: VP8 video packets endpoint=",
             p.endpointId,
@@ -1096,7 +1295,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
             packet.packetIndex,
             " pt=",
             static_cast<int>(packet.payloadType),
-            " v99Worker=1"
+            " v100Worker=1"
         );
     }
 }
@@ -1224,13 +1423,11 @@ void PerParticipantNdiRouter::handleRtp(
 
         ++routedAudioPackets_;
 
-        for (const auto& decoded : p.audioDecoder.decodeRtpPayload(
-                 rtp.payload,
-                 rtp.payloadSize,
-                 rtp.timestamp
-             )) {
-            p.ndi->sendAudioFrame(decoded);
-        }
+        // v100: hand the Opus payload to a per-pipeline audio worker. Decoding
+        // (~200-500us per packet, occasional spikes on resampler reinit) used to
+        // run on the libdatachannel RTP receiver thread under the global router
+        // mutex, serializing all audio+video packets across 10-20 participants.
+        enqueueAudioRtpLocked(p, rtp);
 
         if ((p.audioPackets % 500) == 0) {
             Logger::info(
@@ -1239,7 +1436,8 @@ void PerParticipantNdiRouter::handleRtp(
                 " count=",
                 p.audioPackets,
                 " pt=",
-                static_cast<int>(rtp.payloadType)
+                static_cast<int>(rtp.payloadType),
+                " v100AudioWorker=1"
             );
         }
 

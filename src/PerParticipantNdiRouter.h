@@ -51,6 +51,16 @@ private:
         std::chrono::steady_clock::time_point queuedAt{};
     };
 
+    // v100: Opus payload deliberately small (~120-300 B) so a per-pipeline audio
+    // worker can decode off the RTP receiver thread without holding the global
+    // router mutex during avcodec_send_packet/receive_frame.
+    struct QueuedAudioRtp {
+        std::vector<std::uint8_t> payload;
+        std::uint32_t timestamp = 0;
+        std::uint8_t payloadType = 0;
+        std::chrono::steady_clock::time_point queuedAt{};
+    };
+
     struct ParticipantPipeline {
         std::string endpointId;
         std::string displayName;
@@ -92,6 +102,23 @@ private:
         std::chrono::steady_clock::time_point lastAv1DecodedFrameAt{};
         std::chrono::steady_clock::time_point lastAv1SoftResetAt{};
         std::chrono::steady_clock::time_point lastAv1WarmHardReprimeAt{};
+
+        // v100: per-pipeline audio worker so Opus decode no longer runs on the
+        // libdatachannel RTP receiver thread under the router mutex.
+        std::mutex audioQueueMutex;
+        std::condition_variable audioQueueCv;
+        std::deque<QueuedAudioRtp> audioQueue;
+        std::thread audioThread;
+        bool audioStopRequested = false;
+        bool audioWorkerStarted = false;
+        std::uint64_t droppedQueuedAudioRtp = 0;
+        std::uint64_t droppedStaleAudioRtp = 0;
+        std::uint64_t processedAudioRtp = 0;
+
+        // v100: was a global std::unordered_map without synchronization; access from
+        // multiple per-pipeline worker threads was a data race. Now scoped to the
+        // pipeline (single owner thread = the video worker).
+        std::unordered_map<std::string, std::uint64_t> droppedUnsupportedVideoByKey;
     };
 
     ParticipantPipeline& pipelineForLocked(const JitsiSourceInfo& source);
@@ -110,6 +137,16 @@ private:
     );
     void videoWorkerLoop(ParticipantPipeline* pipeline);
     void processQueuedVideoRtp(ParticipantPipeline& pipeline, const QueuedVideoRtp& packet);
+
+    // v100: audio worker counterparts to the video pipeline above.
+    void startAudioWorkerLocked(ParticipantPipeline& pipeline);
+    void stopAudioWorker(ParticipantPipeline& pipeline);
+    void enqueueAudioRtpLocked(
+        ParticipantPipeline& pipeline,
+        const RtpPacketView& rtp
+    );
+    void audioWorkerLoop(ParticipantPipeline* pipeline);
+    void processQueuedAudioRtp(ParticipantPipeline& pipeline, const QueuedAudioRtp& packet);
     void removePipelineLocked(const std::string& key, const std::string& reason);
     void removeEndpointPipelinesLocked(const std::string& endpointId, const std::string& reason);
     void updateDisplayNameLifecycleFromXml(const std::string& xml);

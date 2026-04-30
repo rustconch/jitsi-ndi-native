@@ -24,8 +24,11 @@ public:
     void stop();
 
     bool sendFrame(const VideoFrameBGRA& frame, int fpsNum, int fpsDen);
-    bool sendVideoFrame(const DecodedVideoFrameBGRA& frame, int fpsNum, int fpsDen);
-    bool sendAudioFrame(const DecodedAudioFrameFloat32Planar& frame);
+    // v100: by-value sinks. Callers can std::move() decoded frames in to avoid
+    // copying the BGRA / planar buffers on the hot path. Old const-ref calls keep
+    // working but pay one extra copy.
+    bool sendVideoFrame(DecodedVideoFrameBGRA frame, int fpsNum, int fpsDen);
+    bool sendAudioFrame(DecodedAudioFrameFloat32Planar frame);
 
     const std::string& sourceName() const { return sourceName_; }
 
@@ -46,7 +49,9 @@ private:
     void startVideoWorker();
     void stopVideoWorker();
     void sendVideoFrameImmediate(const DecodedVideoFrameBGRA& frame, int fpsNum, int fpsDen);
-    DecodedVideoFrameBGRA capVideoFrameForNdi(const DecodedVideoFrameBGRA& frame) const;
+    // v100: takes ownership of the input. If no scaling is required the moved-in
+    // BGRA buffer is forwarded as-is; only on resize do we allocate a new one.
+    DecodedVideoFrameBGRA capVideoFrameForNdi(DecodedVideoFrameBGRA frame) const;
 #endif
 
     std::string sourceName_;
@@ -57,7 +62,11 @@ private:
     std::uint64_t droppedQueuedVideoFrames_ = 0;
     std::uint64_t scaledVideoFrames_ = 0;
 
-    static constexpr std::size_t kMaxAudioQueueFrames = 50;
+    // v100: was 50 (~1s). With clock_audio=true the SDK paces audio at its own
+    // wall clock, so any overflow past ~16 frames (~320ms at 20ms Opus) is just
+    // accumulated A/V drift. Cap shorter to keep audio close to the matching
+    // video frame; old samples are still dropped from the front on overflow.
+    static constexpr std::size_t kMaxAudioQueueFrames = 16;
     static constexpr std::size_t kMaxVideoQueueFrames = 2;
 
     std::mutex audioMutex_;

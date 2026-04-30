@@ -463,7 +463,9 @@ bool Av1RtpFrameAssembler::emitCurrentTemporalUnit(std::uint32_t timestamp, std:
     }
     ++producedFrames_;
 
-    if (producedFrames_ == 1 || (producedFrames_ % 30) == 0) {
+    // v100: was every 30 units (~1s/source). With several sources this dominates
+    // the log. Keep first-frame visibility, then log roughly every 10s/source.
+    if (producedFrames_ == 1 || (producedFrames_ % 300) == 0) {
         Logger::info(
             "Av1RtpFrameAssembler: produced AV1 temporal units=",
             producedFrames_,

@@ -83,16 +83,18 @@ bool NDISender::sendFrame(const VideoFrameBGRA& frame, int fpsNum, int fpsDen) {
     decoded.height = frame.height;
     decoded.stride = frame.stride;
     decoded.bgra = frame.pixels;
-    return sendVideoFrame(decoded, fpsNum, fpsDen);
+    return sendVideoFrame(std::move(decoded), fpsNum, fpsDen);
 }
 
-bool NDISender::sendVideoFrame(const DecodedVideoFrameBGRA& frame, int fpsNum, int fpsDen) {
+bool NDISender::sendVideoFrame(DecodedVideoFrameBGRA frame, int fpsNum, int fpsDen) {
     if (!started_) return false;
     if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) return false;
 
 #if JNN_HAS_NDI
     QueuedVideoFrame queued{};
-    queued.frame = capVideoFrameForNdi(frame);
+    // v100: forward BGRA ownership through the cap helper. For frames already
+    // <= 1080p / contiguous stride this avoids copying ~8MB per FullHD frame.
+    queued.frame = capVideoFrameForNdi(std::move(frame));
     queued.fpsNum = fpsNum <= 0 ? 30 : fpsNum;
     queued.fpsDen = fpsDen <= 0 ? 1 : fpsDen;
 
@@ -118,7 +120,7 @@ bool NDISender::sendVideoFrame(const DecodedVideoFrameBGRA& frame, int fpsNum, i
     return true;
 }
 
-bool NDISender::sendAudioFrame(const DecodedAudioFrameFloat32Planar& frame) {
+bool NDISender::sendAudioFrame(DecodedAudioFrameFloat32Planar frame) {
     if (!started_) return false;
     if (frame.sampleRate <= 0 || frame.channels <= 0 || frame.samples <= 0 || frame.planar.empty()) return false;
 
@@ -142,7 +144,8 @@ bool NDISender::sendAudioFrame(const DecodedAudioFrameFloat32Planar& frame) {
             }
         }
 
-        audioQueue_.push_back(frame);
+        // v100: move the planar buffer instead of copying ~kB-sized vector per frame.
+        audioQueue_.push_back(std::move(frame));
     }
 
     audioCv_.notify_one();
@@ -158,7 +161,7 @@ bool NDISender::sendAudioFrame(const DecodedAudioFrameFloat32Planar& frame) {
 
 
 #if JNN_HAS_NDI
-DecodedVideoFrameBGRA NDISender::capVideoFrameForNdi(const DecodedVideoFrameBGRA& frame) const {
+DecodedVideoFrameBGRA NDISender::capVideoFrameForNdi(DecodedVideoFrameBGRA frame) const {
     static constexpr int kMaxNdiWidth = 1920;
     static constexpr int kMaxNdiHeight = 1080;
 
@@ -168,6 +171,7 @@ DecodedVideoFrameBGRA NDISender::capVideoFrameForNdi(const DecodedVideoFrameBGRA
 
     const int srcStride = frame.stride > 0 ? frame.stride : frame.width * 4;
     if (frame.width <= kMaxNdiWidth && frame.height <= kMaxNdiHeight && srcStride == frame.width * 4) {
+        // v100: forward the moved-in BGRA buffer with no extra copy.
         return frame;
     }
 
