@@ -76,17 +76,6 @@ private:
         std::uint64_t decodedAv1Frames = 0;
         std::uint64_t av1EncodedUnitsWithoutDecodedFrame = 0;
         std::uint64_t av1DecoderSoftResets = 0;
-
-        // v97: a same-device participant can arrive as a "cold" AV1 stream:
-        // RTP assembles into temporal units, but dav1d never returns the first
-        // decoded frame. Warm-stall recovery does not trigger in that case
-        // because decodedAv1Frames is still zero, so keep separate counters.
-        std::uint64_t av1ColdStartNoDecodeUnits = 0;
-        std::uint64_t av1ColdStartDecoderResets = 0;
-        std::uint64_t av1ColdStartAssemblerResets = 0;
-        std::chrono::steady_clock::time_point firstAv1ColdNoDecodeAt{};
-        std::chrono::steady_clock::time_point lastAv1ColdResetAt{};
-
         std::chrono::steady_clock::time_point lastAv1DecodedFrameAt{};
         std::chrono::steady_clock::time_point lastAv1SoftResetAt{};
     };

@@ -48,7 +48,7 @@ void installFfmpegLogFilterOnce() {
     if (!installed) {
         installed = true;
         av_log_set_callback(filteredAvLogCallback);
-        Logger::info("FfmpegMediaDecoder: v97 installed FFmpeg log filter for transient libdav1d OBU parse noise");
+        Logger::info("FfmpegMediaDecoder: v96 installed FFmpeg log filter for transient libdav1d OBU parse noise");
     }
 }
 
@@ -236,7 +236,7 @@ void resetVideoDecoderBuffers(
     swsFmt = AV_PIX_FMT_NONE;
 
     Logger::warn(
-        "FfmpegMediaDecoder: v97 flushed ",
+        "FfmpegMediaDecoder: v96 flushed ",
         label ? label : "video",
         " decoder buffers after source-local AV1 stall"
     );
