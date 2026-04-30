@@ -137,13 +137,6 @@ namespace JitsiNDIPortableLauncher {
 }
 '@
 
-    try {
-        Add-Type -TypeDefinition $code -ReferencedAssemblies @('System.Windows.Forms.dll','System.Drawing.dll') -OutputAssembly $outExe -OutputType WindowsApplication -Language CSharp
-        return
-    } catch {
-        Write-Step "Add-Type compiler failed, trying csc.exe fallback..."
-    }
-
     $tmpSrc = [System.IO.Path]::ChangeExtension($outExe, '.cs')
     Set-Content -Path $tmpSrc -Value $code -Encoding ASCII
 
@@ -154,7 +147,13 @@ namespace JitsiNDIPortableLauncher {
     $csc = $cscCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $csc) { throw 'No C# compiler found. Install .NET Framework build tools or run from Developer PowerShell.' }
 
-    & $csc /nologo /target:winexe /out:$outExe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $tmpSrc
+    $iconPath = Join-Path $root 'gui\icon.ico'
+    if (Test-Path $iconPath) {
+        & $csc /nologo /target:winexe /out:$outExe /win32icon:"$iconPath" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $tmpSrc
+    } else {
+        & $csc /nologo /target:winexe /out:$outExe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $tmpSrc
+    }
+    
     if ($LASTEXITCODE -ne 0) { throw 'csc.exe failed to build JitsiNDI.exe launcher.' }
     Remove-Item -Force $tmpSrc -ErrorAction SilentlyContinue
 }

@@ -1,0 +1,27 @@
+Add-Type -AssemblyName System.Drawing
+$bmp = New-Object System.Drawing.Bitmap("gui\icon.png")
+$resized = New-Object System.Drawing.Bitmap($bmp, 256, 256)
+$ms = New-Object System.IO.MemoryStream
+$resized.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+$pngBytes = $ms.ToArray()
+$bmp.Dispose()
+$resized.Dispose()
+$ms.Dispose()
+
+$fs = [System.IO.File]::Create("gui\icon.ico")
+$bw = New-Object System.IO.BinaryWriter($fs)
+$bw.Write([uint16]0)
+$bw.Write([uint16]1)
+$bw.Write([uint16]1)
+$bw.Write([byte]0)
+$bw.Write([byte]0)
+$bw.Write([byte]0)
+$bw.Write([byte]0)
+$bw.Write([uint16]1)
+$bw.Write([uint16]32)
+$bw.Write([uint32]$pngBytes.Length)
+$bw.Write([uint32]22)
+$bw.Write($pngBytes)
+$bw.Dispose()
+$fs.Dispose()
+Write-Host "Created gui\icon.ico successfully."
