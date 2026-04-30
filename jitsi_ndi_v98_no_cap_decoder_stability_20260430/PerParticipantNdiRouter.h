@@ -79,7 +79,7 @@ private:
         std::uint64_t av1ConsecutiveSoftResets = 0;
         std::uint64_t av1WarmHardReprimes = 0;
 
-        // v99: a same-device participant can arrive as a "cold" AV1 stream:
+        // v98: a same-device participant can arrive as a "cold" AV1 stream:
         // RTP assembles into temporal units, but dav1d never returns the first
         // decoded frame. Warm-stall recovery does not trigger in that case
         // because decodedAv1Frames is still zero, so keep separate counters.

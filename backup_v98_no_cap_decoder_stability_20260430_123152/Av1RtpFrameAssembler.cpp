@@ -1,5 +1,5 @@
 #include "Av1RtpFrameAssembler.h"
-// AV1_LOW_OVERHEAD_V98_OBSERVER_SAFE
+// AV1_LOW_OVERHEAD_V97_OBSERVER_SAFE
 
 #include "Logger.h"
 
@@ -42,19 +42,9 @@ void Av1RtpFrameAssembler::reset() {
     clearCurrentUnit();
 }
 
-void Av1RtpFrameAssembler::resetPreservingSequenceHeader() {
-    // v99: source-local re-prime must not throw away the cached AV1 sequence header.
-    // A full reset can leave a live stream unable to decode until JVB sends a new
-    // keyframe/sequence header; preserving it lets the next good temporal unit carry
-    // codec config again without changing resolution, fps, or subscription quality.
-    const auto cached = cachedSequenceHeaderObu_;
-    reset();
-    cachedSequenceHeaderObu_ = cached;
-    decoderPrimed_ = false;
-}
 
 void Av1RtpFrameAssembler::forceSequenceHeaderOnNextFrame() {
-    // v99: after a source-local FFmpeg/dav1d decoder flush, keep RTP ordering and
+    // v97: after a source-local FFmpeg/dav1d decoder flush, keep RTP ordering and
     // the cached sequence header, but force the next emitted temporal unit to
     // prepend that sequence header again. Without this, the decoder can remain
     // fragile after a local reset because the assembler still thinks it is primed.
@@ -80,7 +70,7 @@ void Av1RtpFrameAssembler::markCorruptUntilMarker() {
     currentUnitHasFrameData_ = false;
     currentUnitKey_ = false;
 
-    // v99: after an RTP sequence gap, first drop the damaged temporal unit.
+    // v97: after an RTP sequence gap, first drop the damaged temporal unit.
     // Then prefer a keyframe, but do not wait forever: JVB may not send a keyframe
     // quickly for every forwarded source, and an infinite wait freezes that NDI
     // source while audio keeps playing.
@@ -414,14 +404,14 @@ bool Av1RtpFrameAssembler::emitCurrentTemporalUnit(std::uint32_t timestamp, std:
 
         // v86 could wait forever here when JVB did not provide a quick keyframe,
         // which froze one NDI source for seconds/minutes while the RTP counter kept
-        // moving. v99 drops a short recovery window, then resumes with the cached
+        // moving. v97 drops a short recovery window, then resumes with the cached
         // sequence header. This may produce one decoder warning after loss, but it
         // keeps the live source moving instead of going black/frozen indefinitely.
         constexpr std::uint64_t kMaxDependentDropsBeforeSoftResume = 8;
         if (dependentDropsAfterGap_ <= kMaxDependentDropsBeforeSoftResume) {
             if (droppedUntilSequenceHeader_ <= 10 || (droppedUntilSequenceHeader_ % 100) == 0) {
                 Logger::warn(
-                    "Av1RtpFrameAssembler: v99 dropping dependent AV1 temporal unit after RTP gap; waiting briefly for keyframe. dropped=",
+                    "Av1RtpFrameAssembler: v97 dropping dependent AV1 temporal unit after RTP gap; waiting briefly for keyframe. dropped=",
                     droppedUntilSequenceHeader_,
                     " afterGap=",
                     dependentDropsAfterGap_
@@ -431,7 +421,7 @@ bool Av1RtpFrameAssembler::emitCurrentTemporalUnit(std::uint32_t timestamp, std:
         }
 
         Logger::warn(
-            "Av1RtpFrameAssembler: v99 soft-resuming AV1 after RTP gap without keyframe to avoid frozen NDI source; afterGapDrops=",
+            "Av1RtpFrameAssembler: v97 soft-resuming AV1 after RTP gap without keyframe to avoid frozen NDI source; afterGapDrops=",
             dependentDropsAfterGap_
         );
         needKeyframeAfterGap_ = false;

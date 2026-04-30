@@ -48,7 +48,7 @@ void installFfmpegLogFilterOnce() {
     if (!installed) {
         installed = true;
         av_log_set_callback(filteredAvLogCallback);
-        Logger::info("FfmpegMediaDecoder: v99 installed FFmpeg log filter for transient libdav1d OBU parse noise");
+        Logger::info("FfmpegMediaDecoder: v97 installed FFmpeg log filter for transient libdav1d OBU parse noise");
     }
 }
 
@@ -101,20 +101,15 @@ AVCodecContext* openDecoder(AVCodecID id) {
 
     if (id == AV_CODEC_ID_AV1 || id == AV_CODEC_ID_VP8) {
         ctx->get_format = chooseSoftwarePixelFormat;
+        ctx->thread_count = 0;
         ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
         ctx->hw_device_ctx = nullptr;
         ctx->hw_frames_ctx = nullptr;
-
-        // v99: do not let every AV1 source create an uncontrolled "auto" libdav1d
-        // worker pool. With 2 cameras + 2 screen shares, auto threading can oversubscribe
-        // the CPU and make otherwise healthy sources freeze while audio continues. This
-        // keeps 1080p/30 requests untouched; it only caps decoder worker fan-out per source.
-        ctx->thread_count = (id == AV_CODEC_ID_AV1) ? 2 : 0;
     }
 
     AVDictionary* opts = nullptr;
     if (id == AV_CODEC_ID_AV1) {
-        av_dict_set(&opts, "threads", "2", 0);
+        av_dict_set(&opts, "threads", "auto", 0);
     }
 
     const int rc = avcodec_open2(ctx, codec, &opts);
@@ -241,7 +236,7 @@ void resetVideoDecoderBuffers(
     swsFmt = AV_PIX_FMT_NONE;
 
     Logger::warn(
-        "FfmpegMediaDecoder: v99 flushed ",
+        "FfmpegMediaDecoder: v97 flushed ",
         label ? label : "video",
         " decoder buffers after source-local AV1 stall"
     );
