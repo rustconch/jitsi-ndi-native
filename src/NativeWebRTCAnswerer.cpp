@@ -1036,23 +1036,34 @@ std::string makeReceiverVideoConstraintsMessage(
     int maxHeight
 ) {
     /*
-        v99 observer-safe conference-safe stability mode:
+        v101 observer-safe conference-safe stability mode:
         - Screen-share/desktop sources remain separate NDI sources and stay at 1080p / 30fps.
         - Camera sources are requested at 1080p / 30fps, but the request is less aggressive.
         - selectedSources/onStageSources stay empty so our technical receiver does not mark every
           remote stream as selected/on-stage and does not disturb normal Jitsi clients.
         - The old LastNChangedEvent is not sent anymore; only ReceiverVideoConstraints is sent.
+
+        v101 bandwidth budget:
+        Previously fixed at 20 Mbps. When the native program and a browser participant share
+        the same NIC, the JVB's aggressive 20 Mbps forwarding saturates the download and the
+        browser loses the remote camera. Scale the budget with the number of active sources
+        (2 Mbps each, floor 4 Mbps, ceiling 8 Mbps). AV1 and VP8 streams at 720-1080p fit
+        comfortably in 2 Mbps per source while still producing high-quality NDI output.
     */
     const std::vector<std::string> realSources = normalizeVideoSourceNamesForConstraints(sourceNames);
     const int lastN = -1;
     const std::vector<std::string> emptyOnStageSources;
+
+    // 2 Mbps per source, clamped to [4 Mbps, 8 Mbps].
+    const int assumedBandwidthBps = std::min(8000000,
+        std::max(4000000, static_cast<int>(realSources.size()) * 2000000));
 
     std::ostringstream out;
 
     out << "{";
     out << "\"colibriClass\":\"ReceiverVideoConstraints\",";
     out << "\"lastN\":" << lastN << ",";
-    out << "\"assumedBandwidthBps\":20000000,";
+    out << "\"assumedBandwidthBps\":" << assumedBandwidthBps << ",";
     out << "\"selectedSources\":" << jsonStringArray(emptyOnStageSources) << ",";
     out << "\"onStageSources\":" << jsonStringArray(emptyOnStageSources) << ",";
     out << "\"defaultConstraints\":{\"maxHeight\":" << maxHeight << ",\"maxFrameRate\":30.0},";
@@ -1149,17 +1160,23 @@ void sendReceiverVideoConstraints(
         reason
     );
 
-    Logger::info(
-        "NativeWebRTCAnswerer: requesting v100 conference-safe constraints: realistic 20Mbps observer budget, screen/camera 1080p/30fps, selectedSources empty, realSources=",
-        realSources.size(),
-        " reason=",
-        reason
-    );
+    {
+        const int logBw = std::min(8000000,
+            std::max(4000000, static_cast<int>(realSources.size()) * 2000000));
+        Logger::info(
+            "NativeWebRTCAnswerer: v101 ReceiverVideoConstraints: sources=",
+            realSources.size(),
+            " assumedBandwidthBps=",
+            logBw,
+            " maxHeight=1080 reason=",
+            reason
+        );
+    }
 
     const bool sent = sendBridgeMessage(
         channel,
         constraintsMessage,
-        "ReceiverVideoConstraints/v100-conference-safe-20mbps-1080p30-local-smooth/" + reason
+        "ReceiverVideoConstraints/v101-scaled-bw-1080p30/" + reason
     );
 
     if (sent) {
@@ -1366,6 +1383,13 @@ struct NativeWebRTCAnswerer::Impl {
     std::shared_ptr<rtc::RtcpReceivingSession> remoteVideoRtcpSession;
 #endif
 
+    // v101: keepalive — sends ClientHello every 25 s so the JVB does not close
+    // the DataChannel on conferences with sparse bridge messages.
+    std::thread keepaliveThread;
+    std::mutex keepaliveMutex;
+    std::condition_variable keepaliveCv;
+    bool keepaliveStop = false;
+
     std::mutex mutex;
     std::condition_variable cv;
 
@@ -1464,7 +1488,7 @@ NativeWebRTCAnswerer::NativeWebRTCAnswerer()
         }
     });
 
-    Logger::info("NativeWebRTCAnswerer: v99 AV1 receive enabled; observer-safe realistic 20Mbps conference-safe budget, selectedSources empty, no legacy LastNChangedEvent, screen/camera 1080p/30fps, per-source workers, v98 decoder stability kept; global reconnect disabled");
+    Logger::info("NativeWebRTCAnswerer: v101 AV1+VP8 receive; scaled bandwidth budget (2Mbps/source, 4-8Mbps total); RTCP PLI on stall; keepalive 25s; no legacy LastNChangedEvent; 1080p/30fps; no global reconnect");
 }
 
 NativeWebRTCAnswerer::~NativeWebRTCAnswerer() {
@@ -1659,6 +1683,17 @@ void NativeWebRTCAnswerer::resetSession() {
     impl_->pcGeneration.fetch_add(1);
     impl_->sessionFailureNotified.store(true);
 
+    // v101: stop keepalive thread before tearing down the DataChannel.
+    {
+        std::lock_guard<std::mutex> kl(impl_->keepaliveMutex);
+        impl_->keepaliveStop = true;
+    }
+    impl_->keepaliveCv.notify_all();
+    if (impl_->keepaliveThread.joinable()) {
+        impl_->keepaliveThread.join();
+    }
+    impl_->keepaliveStop = false; // reset so the next createAnswer can start fresh
+
     std::shared_ptr<rtc::PeerConnection> oldPc;
     std::shared_ptr<rtc::DataChannel> oldBridgeChannel;
 
@@ -1715,6 +1750,26 @@ void NativeWebRTCAnswerer::resetSession() {
     impl_->localSdp.clear();
     impl_->knownVideoSources.clear();
     impl_->knownAudioSources.clear();
+#endif
+}
+
+void NativeWebRTCAnswerer::requestVideoKeyframe() {
+#if JNN_WITH_NATIVE_WEBRTC
+    std::shared_ptr<rtc::Track> track;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        track = impl_->remoteVideoTrack;
+    }
+    if (!track) {
+        return;
+    }
+    try {
+        track->requestKeyframe();
+    } catch (const std::exception& e) {
+        Logger::warn("NativeWebRTCAnswerer: v101 requestKeyframe exception: ", e.what());
+    } catch (...) {
+        Logger::warn("NativeWebRTCAnswerer: v101 requestKeyframe unknown exception");
+    }
 #endif
 }
 
@@ -1882,6 +1937,52 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
 
         bridgeChannel->onError([](std::string error) {
             Logger::warn("NativeWebRTCAnswerer: bridge datachannel error: ", error, "; v99 does not force a global reconnect");
+        });
+
+        // v101: keepalive thread — send ClientHello every 25 s to prevent JVB
+        // from closing the DataChannel when bridge messages are infrequent.
+        // Uses condition_variable so resetSession() can interrupt the sleep immediately.
+        // Stop → join → reset flag → start, in that order, to avoid a race.
+        {
+            std::lock_guard<std::mutex> kl(impl_->keepaliveMutex);
+            impl_->keepaliveStop = true;
+        }
+        impl_->keepaliveCv.notify_all();
+        if (impl_->keepaliveThread.joinable()) {
+            impl_->keepaliveThread.join();
+        }
+        {
+            std::lock_guard<std::mutex> kl(impl_->keepaliveMutex);
+            impl_->keepaliveStop = false;
+        }
+        impl_->keepaliveThread = std::thread([this, pcGeneration, bridgeChannel]() {
+            while (true) {
+                std::unique_lock<std::mutex> lk(impl_->keepaliveMutex);
+                impl_->keepaliveCv.wait_for(lk, std::chrono::seconds(25), [this]() {
+                    return impl_->keepaliveStop;
+                });
+                if (impl_->keepaliveStop) {
+                    break;
+                }
+                lk.unlock();
+
+                if (impl_->pcGeneration.load() != pcGeneration) {
+                    break;
+                }
+
+                const bool sent = sendBridgeMessage(
+                    bridgeChannel,
+                    "{\"colibriClass\":\"ClientHello\"}",
+                    "keepalive-25s"
+                );
+                if (sent) {
+                    Logger::info("NativeWebRTCAnswerer: v101 keepalive ClientHello sent");
+                } else {
+                    Logger::warn("NativeWebRTCAnswerer: v101 keepalive ClientHello send failed (channel not open?)");
+                    // Channel closed or not ready — stop pinging until next session.
+                    break;
+                }
+            }
         });
 
         bridgeChannel->onMessage([

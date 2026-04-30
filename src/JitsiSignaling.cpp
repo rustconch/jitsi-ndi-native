@@ -180,6 +180,12 @@ JitsiSignaling::JitsiSignaling(JitsiSignalingConfig config)
             reason
         );
     });
+
+    // v101: wire PLI keyframe requests from per-pipeline AV1 stall recovery
+    // back to the WebRTC track so the JVB forwards a fresh keyframe.
+    ndiRouter_->setKeyframeRequestCallback([this]() {
+        answerer_.requestVideoKeyframe();
+    });
 }
 
 JitsiSignaling::~JitsiSignaling() {

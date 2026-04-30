@@ -43,6 +43,10 @@ public:
     void addRemoteCandidate(const LocalIceCandidate& candidate);
     void resetSession();
 
+    // v101: send RTCP PLI to ask the JVB for a keyframe on the video track.
+    // Called by PerParticipantNdiRouter when an AV1 stall is detected.
+    void requestVideoKeyframe();
+
     std::uint64_t audioPackets() const { return audioPackets_; }
     std::uint64_t videoPackets() const { return videoPackets_; }
     std::uint64_t audioBytes() const { return audioBytes_; }

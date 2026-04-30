@@ -319,6 +319,48 @@ PerParticipantNdiRouter::~PerParticipantNdiRouter() {
     }
 }
 
+void PerParticipantNdiRouter::setKeyframeRequestCallback(KeyframeRequestCallback cb) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    keyframeRequestCb_ = std::move(cb);
+}
+
+// v101: send a PLI keyframe request if at least 5 s have elapsed since the last
+// one for this pipeline. Called from the video worker thread (mutex_ not held);
+// briefly acquires mutex_ only to copy the callback pointer.
+void PerParticipantNdiRouter::requestKeyframeIfDue(
+    ParticipantPipeline& pipeline,
+    const std::string& sourceName,
+    std::chrono::steady_clock::time_point now
+) {
+    const auto sinceLastPliMs = pipeline.lastPliRequestAt.time_since_epoch().count() == 0
+        ? 1000000LL
+        : std::chrono::duration_cast<std::chrono::milliseconds>(now - pipeline.lastPliRequestAt).count();
+
+    if (sinceLastPliMs < 5000) {
+        return;
+    }
+
+    KeyframeRequestCallback cb;
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        cb = keyframeRequestCb_;
+    }
+
+    if (!cb) {
+        return;
+    }
+
+    cb();
+    pipeline.lastPliRequestAt = now;
+
+    Logger::info(
+        "PerParticipantNdiRouter: v101 PLI keyframe requested endpoint=",
+        pipeline.endpointId,
+        " source=",
+        sourceName
+    );
+}
+
 void PerParticipantNdiRouter::removePipelineLocked(const std::string& key, const std::string& reason) {
     if (key.empty()) {
         return;
@@ -1115,6 +1157,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 p.av1Decoder.reset();
                 p.av1.forceSequenceHeaderOnNextFrame();
                 p.lastAv1ColdResetAt = now;
+                requestKeyframeIfDue(p, packet.sourceName, now);
             }
 
             const bool shouldHardReprime = p.av1ColdStartDecoderResets >= 2
@@ -1145,6 +1188,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 p.av1ColdStartNoDecodeUnits = 0;
                 p.firstAv1ColdNoDecodeAt = {};
                 p.lastAv1ColdResetAt = now;
+                requestKeyframeIfDue(p, packet.sourceName, now);
             }
         } else if (!frames.empty() && p.decodedAv1Frames > 0) {
             ++p.av1EncodedUnitsWithoutDecodedFrame;
@@ -1191,6 +1235,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 p.av1EncodedUnitsWithoutDecodedFrame = 0;
                 ++p.av1ConsecutiveSoftResets;
                 p.lastAv1SoftResetAt = now;
+                requestKeyframeIfDue(p, packet.sourceName, now);
             }
 
             const auto sinceWarmHardReprimeMs = p.lastAv1WarmHardReprimeAt.time_since_epoch().count() == 0
@@ -1234,6 +1279,7 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
                 p.av1ConsecutiveSoftResets = 0;
                 p.lastAv1WarmHardReprimeAt = now;
                 p.lastAv1SoftResetAt = now;
+                requestKeyframeIfDue(p, packet.sourceName, now);
             }
         }
 
@@ -1281,7 +1327,44 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
     auto encoded = p.vp8.push(rtp);
     if (encoded) {
         // v100: move decoded BGRA into the NDI sender (no per-frame copy).
+        // v101: stall recovery — when the FFmpeg VP8 decoder stops producing frames
+        // (e.g. after a gap that skipped the keyframe, or a corrupted reference frame),
+        // reset the decoder + depacketizer and send RTCP PLI so the JVB can request
+        // a fresh keyframe from the sender.
         auto decodedFrames = p.videoDecoder.decode(*encoded);
+
+        const auto nowVp8 = std::chrono::steady_clock::now();
+        if (!decodedFrames.empty()) {
+            p.vp8DecodedFrames += decodedFrames.size();
+            p.vp8EncodedWithoutDecoded = 0;
+            p.lastVp8DecodedFrameAt = nowVp8;
+        } else {
+            ++p.vp8EncodedWithoutDecoded;
+            const auto sinceDecodedMs = p.lastVp8DecodedFrameAt.time_since_epoch().count() == 0
+                ? 1000000LL
+                : std::chrono::duration_cast<std::chrono::milliseconds>(nowVp8 - p.lastVp8DecodedFrameAt).count();
+
+            if (p.vp8EncodedWithoutDecoded >= 5 && sinceDecodedMs >= 1500) {
+                ++p.vp8DecoderResets;
+                Logger::warn(
+                    "PerParticipantNdiRouter: v101 VP8 stall detected, resetting decoder endpoint=",
+                    p.endpointId,
+                    " source=",
+                    packet.sourceName,
+                    " noDecoded=",
+                    p.vp8EncodedWithoutDecoded,
+                    " sinceDecodedMs=",
+                    sinceDecodedMs,
+                    " resets=",
+                    p.vp8DecoderResets
+                );
+                p.videoDecoder.reset();
+                p.vp8.reset(); // discard any partial frame; wait for next keyframe
+                p.vp8EncodedWithoutDecoded = 0;
+                requestKeyframeIfDue(p, packet.sourceName, nowVp8);
+            }
+        }
+
         for (auto& decoded : decodedFrames) {
             p.ndi->sendVideoFrame(std::move(decoded), 30, 1);
         }
@@ -1293,9 +1376,13 @@ void PerParticipantNdiRouter::processQueuedVideoRtp(ParticipantPipeline& p, cons
             p.endpointId,
             " count=",
             packet.packetIndex,
+            " decoded=",
+            p.vp8DecodedFrames,
+            " resets=",
+            p.vp8DecoderResets,
             " pt=",
             static_cast<int>(packet.payloadType),
-            " v100Worker=1"
+            " v101Worker=1"
         );
     }
 }

@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -30,6 +31,11 @@ public:
     void handleParticipantUnavailableXml(const std::string& xml);
 
     void handleRtp(const std::string& mid, const std::uint8_t* data, std::size_t size);
+
+    // v101: callback fired (throttled, ≤1 per 5 s per pipeline) when an AV1
+    // stall is detected and a keyframe from the JVB would help recovery.
+    using KeyframeRequestCallback = std::function<void()>;
+    void setKeyframeRequestCallback(KeyframeRequestCallback cb);
 
     std::uint64_t routedAudioPackets() const { return routedAudioPackets_; }
     std::uint64_t routedVideoPackets() const { return routedVideoPackets_; }
@@ -103,6 +109,18 @@ private:
         std::chrono::steady_clock::time_point lastAv1SoftResetAt{};
         std::chrono::steady_clock::time_point lastAv1WarmHardReprimeAt{};
 
+        // v101: VP8 stall recovery — mirrors the AV1 warm-stall logic for VP8 sources.
+        // The VP8 depacketizer self-heals on sequence errors but the FFmpeg decoder
+        // can get stuck after a corrupted frame or a gap that misses the keyframe.
+        std::uint64_t vp8DecodedFrames = 0;
+        std::uint64_t vp8EncodedWithoutDecoded = 0;
+        std::uint64_t vp8DecoderResets = 0;
+        std::chrono::steady_clock::time_point lastVp8DecodedFrameAt{};
+
+        // v101: throttle RTCP PLI requests so we don't flood the JVB.
+        // Reset on successful keyframe decode (when decoder starts producing frames again).
+        std::chrono::steady_clock::time_point lastPliRequestAt{};
+
         // v100: per-pipeline audio worker so Opus decode no longer runs on the
         // libdatachannel RTP receiver thread under the router mutex.
         std::mutex audioQueueMutex;
@@ -147,6 +165,15 @@ private:
     );
     void audioWorkerLoop(ParticipantPipeline* pipeline);
     void processQueuedAudioRtp(ParticipantPipeline& pipeline, const QueuedAudioRtp& packet);
+
+    // v101: fire the keyframe request callback if the per-pipeline cooldown has
+    // elapsed. Called from the video worker thread; briefly acquires mutex_ to
+    // read the callback pointer.
+    void requestKeyframeIfDue(
+        ParticipantPipeline& pipeline,
+        const std::string& sourceName,
+        std::chrono::steady_clock::time_point now
+    );
     void removePipelineLocked(const std::string& key, const std::string& reason);
     void removeEndpointPipelinesLocked(const std::string& endpointId, const std::string& reason);
     void updateDisplayNameLifecycleFromXml(const std::string& xml);
@@ -171,4 +198,8 @@ private:
     std::uint64_t droppedNonOpusAudioPackets_ = 0;
     std::uint64_t droppedJvbAudioPackets_ = 0;
     std::uint64_t droppedRtxVideoPackets_ = 0;
+
+    // v101: RTCP PLI keyframe request callback (set once at startup, never
+    // changed afterwards; read from video worker threads under mutex_).
+    KeyframeRequestCallback keyframeRequestCb_;
 };
