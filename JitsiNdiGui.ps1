@@ -1,7 +1,6 @@
-# Jitsi NDI Native GUI v64 - visual only with speaker quality link generator
+# Jitsi NDI Native GUI v65 - visual redesign using brand reference palette
 # ASCII-only PowerShell script to avoid codepage/parser issues.
-# Based on stable v59b detached launcher: no live native stdout reading, no NDI scanning.
-# Optional --nick remains exactly as in the working v59b flow.
+# Same functionality as v64; only the visual layer was changed.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19,6 +18,7 @@ $script:isStopping = $false
 $script:nativeStartedAt = $null
 $script:fontCollection = $null
 $script:fontFamily = $null
+$script:statusRunning = $false
 
 function Color-Hex {
     param([string]$Hex)
@@ -31,21 +31,35 @@ function Color-Hex {
     )
 }
 
-# Palette from supplied references.
-$C_Asphalt = Color-Hex '#111111'
-$C_Dark = Color-Hex '#182028'
-$C_Dark2 = Color-Hex '#212B35'
-$C_White = Color-Hex '#FFFA7D'
-$C_Milk = Color-Hex '#FFFED6'
-$C_Mel = Color-Hex '#F7F7F7'
-$C_Purple = Color-Hex '#641FF1'
-$C_Orange = Color-Hex '#FF9900'
-$C_Lav = Color-Hex '#EEE5FF'
-$C_Blue = Color-Hex '#71D2FF'
-$C_Mint = Color-Hex '#D9FFD6'
-$C_Green = Color-Hex '#6DDD65'
-$C_Line = Color-Hex '#E7E2F2'
+# Brand palette (reference: colors.png, reservecolors.png, gradients.png).
+$C_Asphalt  = Color-Hex '#111111'
+$C_Dark     = Color-Hex '#111111'
+$C_Dark2    = Color-Hex '#2A2A2A'
+$C_White    = Color-Hex '#FFFA7D'
+$C_Milk     = Color-Hex '#FFFED6'
+$C_Mel      = [System.Drawing.Color]::White
+$C_Purple   = Color-Hex '#641FF1'
+$C_Orange   = Color-Hex '#FF9900'
+$C_Lav      = Color-Hex '#EEE5FF'
+$C_Blue     = Color-Hex '#71D2FF'
+$C_Mint     = Color-Hex '#D9FFD6'
+$C_Green    = Color-Hex '#6DDD65'
+$C_Line     = Color-Hex '#E7E2F2'
+$C_Border   = Color-Hex '#DDD8EE'
 $C_TextSoft = Color-Hex '#6E7180'
+
+# Rounded rectangle GraphicsPath helper.
+function New-RoundedPath {
+    param([System.Drawing.Rectangle]$Rect, [int]$Radius)
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $d = $Radius * 2
+    $path.AddArc($Rect.X,            $Rect.Y,             $d, $d, 180, 90)
+    $path.AddArc(($Rect.Right - $d), $Rect.Y,             $d, $d, 270, 90)
+    $path.AddArc(($Rect.Right - $d), ($Rect.Bottom - $d), $d, $d,   0, 90)
+    $path.AddArc($Rect.X,            ($Rect.Bottom - $d), $d, $d,  90, 90)
+    $path.CloseFigure()
+    return $path
+}
 
 function Load-CirceFont {
     try {
@@ -259,17 +273,19 @@ function Set-RunningUi {
         $txtRoom.Enabled = -not $running
         $txtNick.Enabled = -not $running
         $chkNick.Enabled = -not $running
+        $script:statusRunning = $running
         if ($running) {
             $lblStatus.Text = 'CONNECTED'
-            $lblStatus.BackColor = $C_Mint
-            $lblStatus.ForeColor = Color-Hex '#207A1E'
+            $lblStatus.BackColor = [System.Drawing.Color]::Transparent
+            $lblStatus.ForeColor = Color-Hex '#1A6B18'
             $lblStatusHint.Text = 'native process is running'
         } else {
             $lblStatus.Text = 'STOP'
-            $lblStatus.BackColor = $C_Lav
+            $lblStatus.BackColor = [System.Drawing.Color]::Transparent
             $lblStatus.ForeColor = $C_Orange
             $lblStatusHint.Text = 'ready to connect'
         }
+        try { $statusBox.Invalidate() } catch {}
     } catch {}
 }
 
@@ -284,10 +300,10 @@ function Stop-NativeProcess {
         }
     } catch {}
     Set-RunningUi $false
-Update-VisualLayout
+    Update-VisualLayout
 }
 
-# UI shell
+# ── Form ──────────────────────────────────────────────────────────────────────
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Jitsi NDI'
 $form.Size = New-Object System.Drawing.Size(760, 690)
@@ -296,24 +312,40 @@ $form.MinimumSize = New-Object System.Drawing.Size(740, 650)
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
 $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Show
 $form.Font = New-GuiFont 9.5
-$form.BackColor = $C_Mel
+$form.BackColor = [System.Drawing.Color]::White
 
+# Background: pure white body; orange-to-lemon gradient in top header strip only.
 $form.Add_Paint({
     param($sender, $e)
     try {
-        $rect = $form.ClientRectangle
-        $b = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $C_Lav, $C_Milk, 35)
-        $e.Graphics.FillRectangle($b, $rect)
-        $b.Dispose()
-        $accentRect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, 150)
-        $b2 = New-Object System.Drawing.Drawing2D.LinearGradientBrush($accentRect, [System.Drawing.Color]::FromArgb(95, $C_Orange), [System.Drawing.Color]::FromArgb(45, $C_Purple), 0)
-        $e.Graphics.FillRectangle($b2, $accentRect)
-        $b2.Dispose()
+        $g = $e.Graphics
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+        # White body below the header strip
+        $bodyRect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, $form.ClientSize.Height)
+        $g.FillRectangle([System.Drawing.Brushes]::White, $bodyRect)
+
+        # Orange header gradient: Lис (#FF9900) -> Лимончелло (#FFFA7D), 130px tall
+        $headerH = 130
+        $headerRect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, $headerH)
+        $gradBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+            $headerRect,
+            $C_Orange,
+            $C_White,
+            [System.Drawing.Drawing2D.LinearGradientMode]::Vertical
+        )
+        $g.FillRectangle($gradBrush, $headerRect)
+        $gradBrush.Dispose()
+
+        # Thin separator line at bottom of header strip
+        $sepPen = New-Object System.Drawing.Pen($C_Line, 1)
+        $g.DrawLine($sepPen, 0, $headerH, $form.ClientSize.Width, $headerH)
+        $sepPen.Dispose()
     } catch {}
 })
 
-# Top title
-$lblLogo = New-Label 'Jitsi NDI' 0 26 760 70 33 $C_Orange ([System.Drawing.FontStyle]::Bold)
+# ── Title ─────────────────────────────────────────────────────────────────────
+$lblLogo = New-Label 'Jitsi NDI' 0 26 760 70 33 $C_Asphalt ([System.Drawing.FontStyle]::Bold)
 $lblLogo.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $form.Controls.Add($lblLogo)
 
@@ -321,26 +353,50 @@ $lblSub = New-Label '' 0 88 760 24 11 $C_Asphalt ([System.Drawing.FontStyle]::Re
 $lblSub.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $form.Controls.Add($lblSub)
 
-# Main white card
+# ── Card shadow (behind the card, slightly offset) ────────────────────────────
+$cardShadow = New-Object System.Windows.Forms.Panel
+$cardShadow.Location = New-Object System.Drawing.Point(86, 132)
+$cardShadow.Size = New-Object System.Drawing.Size(596, 350)
+$cardShadow.BackColor = Color-Hex '#DDDAE8'
+$cardShadow.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$form.Controls.Add($cardShadow)
+
+# ── Main card ─────────────────────────────────────────────────────────────────
 $card = New-Object System.Windows.Forms.Panel
 $card.Location = New-Object System.Drawing.Point(82, 128)
 $card.Size = New-Object System.Drawing.Size(596, 350)
-$card.BackColor = [System.Drawing.Color]::FromArgb(248, 248, 248)
+$card.BackColor = [System.Drawing.Color]::White
 $card.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+
 $card.Add_Paint({
     param($sender, $e)
     try {
         $g = $e.Graphics
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $r = New-Object System.Drawing.Rectangle(0,0,($card.Width-1),($card.Height-1))
-        $pen = New-Object System.Drawing.Pen($C_Line, 1)
-        $g.DrawRectangle($pen, $r)
+
+        # White fill with rounded corners (radius 8)
+        $r = New-Object System.Drawing.Rectangle(0, 0, ($card.Width - 1), ($card.Height - 1))
+        $path = New-RoundedPath $r 8
+        $g.FillPath([System.Drawing.Brushes]::White, $path)
+
+        # Border in brand line colour
+        $pen = New-Object System.Drawing.Pen($C_Border, 1)
+        $g.DrawPath($pen, $path)
         $pen.Dispose()
+        $path.Dispose()
+
+        # Thin orange accent strip along the top edge of the card
+        $accentRect = New-Object System.Drawing.Rectangle(0, 0, ($card.Width - 1), 4)
+        $accentPath = New-RoundedPath $accentRect 8
+        $accentBrush = New-Object System.Drawing.SolidBrush($C_Orange)
+        $g.FillPath($accentBrush, $accentPath)
+        $accentBrush.Dispose()
+        $accentPath.Dispose()
     } catch {}
 })
 $form.Controls.Add($card)
 
-# Form fields inside card
+# ── Form fields inside card ───────────────────────────────────────────────────
 $lblRoom = New-Label 'Meeting link' 36 32 130 24 10 $C_TextSoft
 $card.Controls.Add($lblRoom)
 
@@ -416,11 +472,34 @@ $card.Controls.Add($chkNick)
 $lblNickNote = New-Label '' 170 206 370 22 8.8 $C_TextSoft
 $card.Controls.Add($lblNickNote)
 
+# ── Status area (borderless; pill drawn via Paint) ────────────────────────────
 $statusBox = New-Object System.Windows.Forms.Panel
 $statusBox.Location = New-Object System.Drawing.Point(36, 246)
 $statusBox.Size = New-Object System.Drawing.Size(504, 62)
-$statusBox.BackColor = [System.Drawing.Color]::White
-$statusBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$statusBox.BackColor = [System.Drawing.Color]::Transparent
+$statusBox.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+
+$statusBox.Add_Paint({
+    param($sender, $e)
+    try {
+        $g = $e.Graphics
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+        # Light hairline separator above status row
+        $sepPen = New-Object System.Drawing.Pen($C_Line, 1)
+        $g.DrawLine($sepPen, 0, 0, $statusBox.Width, 0)
+        $sepPen.Dispose()
+
+        # Status pill background (rounded rectangle behind lblStatus)
+        $pillRect = New-Object System.Drawing.Rectangle(108, 10, 130, 34)
+        $pillColor = if ($script:statusRunning) { Color-Hex '#D4F5D2' } else { $C_Lav }
+        $pillPath = New-RoundedPath $pillRect 12
+        $pillBrush = New-Object System.Drawing.SolidBrush($pillColor)
+        $g.FillPath($pillBrush, $pillPath)
+        $pillBrush.Dispose()
+        $pillPath.Dispose()
+    } catch {}
+})
 $card.Controls.Add($statusBox)
 
 $lblStatusTitle = New-Label 'STATUS' 18 10 90 22 8.5 $C_TextSoft ([System.Drawing.FontStyle]::Bold)
@@ -431,12 +510,13 @@ $lblStatus.Location = New-Object System.Drawing.Point(112, 12)
 $lblStatus.Size = New-Object System.Drawing.Size(120, 30)
 $lblStatus.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $lblStatus.Font = New-GuiFont 11 ([System.Drawing.FontStyle]::Bold)
+$lblStatus.BackColor = [System.Drawing.Color]::Transparent
 $statusBox.Controls.Add($lblStatus)
 
 $lblStatusHint = New-Label 'ready to connect' 246 16 230 22 9 $C_TextSoft
 $statusBox.Controls.Add($lblStatusHint)
 
-# Footer with existing controls
+# ── Footer ────────────────────────────────────────────────────────────────────
 $footer = New-Object System.Windows.Forms.Panel
 $footer.Location = New-Object System.Drawing.Point(0, 462)
 $footer.Size = New-Object System.Drawing.Size(760, 88)
@@ -456,10 +536,8 @@ $btnStop.Text = 'STOP'
 $btnStop.Location = New-Object System.Drawing.Point(166, 22)
 $btnStop.Size = New-Object System.Drawing.Size(108, 42)
 $btnStop.Enabled = $false
-Set-ButtonStyle $btnStop $C_Dark2 $C_Milk $true
+Set-ButtonStyle $btnStop $C_Purple $C_Mel $true
 $footer.Controls.Add($btnStop)
-
-
 
 $btnOpenLog = New-Object System.Windows.Forms.Button
 $btnOpenLog.Text = 'Open log'
@@ -475,8 +553,7 @@ $btnLogs.Size = New-Object System.Drawing.Size(110, 42)
 Set-ButtonStyle $btnLogs $C_Dark2 $C_Milk
 $footer.Controls.Add($btnLogs)
 
-
-# Compact GUI log
+# ── Compact log line above footer ─────────────────────────────────────────────
 $txtLog = New-Object System.Windows.Forms.TextBox
 $script:txtLog = $txtLog
 $txtLog.Location = New-Object System.Drawing.Point(82, 438)
@@ -485,11 +562,12 @@ $txtLog.Multiline = $true
 $txtLog.ScrollBars = 'None'
 $txtLog.ReadOnly = $true
 $txtLog.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-$txtLog.BackColor = $C_Mel
+$txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.ForeColor = $C_TextSoft
 $txtLog.Font = New-GuiFont 8.5
 $form.Controls.Add($txtLog)
 
+# ── Responsive layout ─────────────────────────────────────────────────────────
 function Update-VisualLayout {
     try {
         $w = [int]$form.ClientSize.Width
@@ -499,6 +577,8 @@ function Update-VisualLayout {
         $cardW = [Math]::Min(680, [Math]::Max(596, $w - 96))
         $card.Left = [int](($w - $cardW) / 2)
         $card.Width = $cardW
+        $cardShadow.Left = $card.Left + 4
+        $cardShadow.Width = $card.Width
         $fieldW = [Math]::Max(260, $card.Width - 226)
         $txtRoom.Width = $fieldW
         $lblParsed.Width = $fieldW
@@ -524,6 +604,7 @@ function Update-VisualLayout {
         $txtLog.Top = $footer.Top - 20
         $form.Invalidate()
         $card.Invalidate()
+        $statusBox.Invalidate()
     } catch {}
 }
 
@@ -623,7 +704,7 @@ $btnStart.Add_Click({
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
-Update-VisualLayout
+        Update-VisualLayout
     }
 })
 
@@ -638,7 +719,7 @@ $timer.Add_Tick({
                 if (-not $script:isStopping) { Append-Log "[GUI] Native exited with code $($script:proc.ExitCode)." }
                 $script:proc = $null
                 Set-RunningUi $false
-Update-VisualLayout
+                Update-VisualLayout
             } else {
                 if ($script:nativeStartedAt) {
                     $elapsed = [int]((Get-Date) - $script:nativeStartedAt).TotalSeconds
