@@ -1,7 +1,4 @@
-# Jitsi NDI Native GUI v65 - visual redesign using brand reference palette
-# ASCII-only PowerShell script to avoid codepage/parser issues.
-# Same functionality as v64; only the visual layer was changed.
-
+﻿# Jitsi NDI Native GUI v68 - Full Dark UI Rebuild (Reference: htathtyc.png)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -18,6 +15,7 @@ $script:isStopping = $false
 $script:nativeStartedAt = $null
 $script:fontCollection = $null
 $script:fontFamily = $null
+$script:logoFontFamily = $null
 $script:statusRunning = $false
 
 function Color-Hex {
@@ -31,28 +29,23 @@ function Color-Hex {
     )
 }
 
-# Brand palette (reference: colors.png, reservecolors.png, gradients.png).
-$C_Asphalt  = Color-Hex '#111111'
-$C_Dark     = Color-Hex '#111111'
-$C_Dark2    = Color-Hex '#2A2A2A'
-$C_White    = Color-Hex '#FFFA7D'
-$C_Milk     = Color-Hex '#FFFED6'
-$C_Mel      = [System.Drawing.Color]::White
-$C_Purple   = Color-Hex '#641FF1'
-$C_Orange   = Color-Hex '#FF9900'
-$C_Lav      = Color-Hex '#EEE5FF'
-$C_Blue     = Color-Hex '#71D2FF'
-$C_Mint     = Color-Hex '#D9FFD6'
-$C_Green    = Color-Hex '#6DDD65'
-$C_Line     = Color-Hex '#E7E2F2'
-$C_Border   = Color-Hex '#DDD8EE'
-$C_TextSoft = Color-Hex '#6E7180'
+$C_BgPurple    = Color-Hex '#211654'
+$C_BgGlow      = Color-Hex '#FF9900'
+$C_InputBg     = Color-Hex '#1B143D'
+$C_InputBorder = Color-Hex '#3E346E'
+$C_LabelText   = Color-Hex '#FFFFFF'
+$C_WhiteText   = Color-Hex '#FFFFFF'
+$C_Orange      = Color-Hex '#FF8C00'
+$C_OrangeHover = Color-Hex '#FFAD40'
+$C_IconBg      = Color-Hex '#31266B'
+$C_DarkButton  = Color-Hex '#1C153E'
+$C_Green       = Color-Hex '#6DDD65'
 
-# Rounded rectangle GraphicsPath helper.
 function New-RoundedPath {
     param([System.Drawing.Rectangle]$Rect, [int]$Radius)
     $path = New-Object System.Drawing.Drawing2D.GraphicsPath
     $d = $Radius * 2
+    if ($d -le 0) { $d = 1 }
     $path.AddArc($Rect.X,            $Rect.Y,             $d, $d, 180, 90)
     $path.AddArc(($Rect.Right - $d), $Rect.Y,             $d, $d, 270, 90)
     $path.AddArc(($Rect.Right - $d), ($Rect.Bottom - $d), $d, $d,   0, 90)
@@ -61,42 +54,55 @@ function New-RoundedPath {
     return $path
 }
 
-function Load-CirceFont {
+function Load-Fonts {
     try {
         $script:fontCollection = New-Object System.Drawing.Text.PrivateFontCollection
         $fontCandidates = @(
+            (Join-Path $script:repoRoot 'gui\TT Foxford ExtraBold.otf'),
             (Join-Path $script:repoRoot 'gui\Circe-ExtraBold.otf'),
             (Join-Path $script:repoRoot 'gui\Circe-Bold.otf'),
             (Join-Path $script:repoRoot 'gui\Circe-Regular.otf'),
-            (Join-Path $script:repoRoot 'fonts\Circe-ExtraBold.otf'),
-            (Join-Path $script:repoRoot 'fonts\Circe-Bold.otf'),
-            (Join-Path $script:repoRoot 'fonts\Circe-Regular.otf')
+            (Join-Path $script:repoRoot 'fonts\TT Foxford ExtraBold.otf'),
+            (Join-Path $script:repoRoot 'fonts\Circe-ExtraBold.otf')
         )
         foreach ($fp in $fontCandidates) {
             if (Test-Path $fp) {
                 try { $script:fontCollection.AddFontFile($fp) } catch {}
             }
         }
-        if ($script:fontCollection.Families.Count -gt 0) {
+        foreach ($fam in $script:fontCollection.Families) {
+            if ($fam.Name -match 'Foxford') { $script:logoFontFamily = $fam }
+            if ($fam.Name -match 'Circe' -and -not $script:fontFamily) { $script:fontFamily = $fam }
+        }
+        if (-not $script:fontFamily -and $script:fontCollection.Families.Count -gt 0) {
             $script:fontFamily = $script:fontCollection.Families[0]
         }
     } catch {}
 }
 
-Load-CirceFont
+Load-Fonts
 
 function New-GuiFont {
     param(
         [float]$Size,
-        [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular
+        [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular,
+        [bool]$Logo = $false
     )
     try {
+        if ($Logo -and $script:logoFontFamily) { return New-Object System.Drawing.Font($script:logoFontFamily, $Size, $Style, [System.Drawing.GraphicsUnit]::Point) }
         if ($script:fontFamily) { return New-Object System.Drawing.Font($script:fontFamily, $Size, $Style, [System.Drawing.GraphicsUnit]::Point) }
     } catch {}
     try { return New-Object System.Drawing.Font('Circe', $Size, $Style, [System.Drawing.GraphicsUnit]::Point) } catch {}
     return New-Object System.Drawing.Font('Segoe UI', $Size, $Style, [System.Drawing.GraphicsUnit]::Point)
 }
 
+$fontTitle = New-GuiFont 28 ([System.Drawing.FontStyle]::Bold) $true
+$fontLabel = New-GuiFont 11 ([System.Drawing.FontStyle]::Regular) $false
+$fontInput = New-GuiFont 12 ([System.Drawing.FontStyle]::Regular) $false
+$fontBtn   = New-GuiFont 13 ([System.Drawing.FontStyle]::Bold) $false
+$fontIcon  = New-GuiFont 18 ([System.Drawing.FontStyle]::Bold) $false
+
+# Data Methods
 function Convert-JitsiInputToRoom {
     param([string]$InputText)
     $s = ("$InputText").Trim()
@@ -147,8 +153,8 @@ function Get-SpeakerQualityProfile {
 
 function Get-SelectedSpeakerQuality {
     try {
-        if ($script:cmbSpeakerQuality -and -not $script:cmbSpeakerQuality.IsDisposed -and $script:cmbSpeakerQuality.SelectedItem) {
-            return [string]$script:cmbSpeakerQuality.SelectedItem
+        if ($script:cmbQuality -and -not $script:cmbQuality.IsDisposed -and $script:cmbQuality.SelectedItem) {
+            return [string]$script:cmbQuality.SelectedItem
         }
     } catch {}
     return '1080p'
@@ -181,7 +187,7 @@ function Build-SpeakerLink {
 function Update-SpeakerLink {
     try {
         if ($script:txtSpeakerLink -and -not $script:txtSpeakerLink.IsDisposed) {
-            $script:txtSpeakerLink.Text = Build-SpeakerLink $txtRoom.Text
+            $script:txtSpeakerLink.Text = Build-SpeakerLink $script:txtRoom.Text
         }
     } catch {}
 }
@@ -225,67 +231,17 @@ function Append-Log {
         if ($script:currentLogFile) {
             try { Add-Content -LiteralPath $script:currentLogFile -Value $text -Encoding UTF8 } catch {}
         }
-        if ($script:txtLog -and -not $script:txtLog.IsDisposed) {
-            try {
-                $script:txtLog.AppendText($text + [Environment]::NewLine)
-                if ($script:txtLog.TextLength -gt 20000) {
-                    $script:txtLog.Text = $script:txtLog.Text.Substring([Math]::Max(0, $script:txtLog.TextLength - 12000))
-                    $script:txtLog.SelectionStart = $script:txtLog.TextLength
-                    $script:txtLog.ScrollToCaret()
-                }
-            } catch {}
-        }
     } catch {}
-}
-
-function Set-ButtonStyle {
-    param(
-        [System.Windows.Forms.Button]$Button,
-        [System.Drawing.Color]$Back,
-        [System.Drawing.Color]$Fore,
-        [bool]$Primary = $false
-    )
-    $Button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $Button.FlatAppearance.BorderSize = 0
-    $Button.BackColor = $Back
-    $Button.ForeColor = $Fore
-    $Button.Font = New-GuiFont $(if ($Primary) { 11 } else { 9.5 }) ([System.Drawing.FontStyle]::Bold)
-    $Button.Cursor = [System.Windows.Forms.Cursors]::Hand
-}
-
-function New-Label {
-    param([string]$Text, [int]$X, [int]$Y, [int]$W, [int]$H, [float]$Size = 9.5, [object]$Fore = $null, [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular)
-    $l = New-Object System.Windows.Forms.Label
-    $l.Text = $Text
-    $l.Location = New-Object System.Drawing.Point($X, $Y)
-    $l.Size = New-Object System.Drawing.Size($W, $H)
-    $l.Font = New-GuiFont $Size $Style
-    $l.BackColor = [System.Drawing.Color]::Transparent
-    if ($null -ne $Fore) { $l.ForeColor = [System.Drawing.Color]$Fore } else { $l.ForeColor = $C_Asphalt }
-    return $l
 }
 
 function Set-RunningUi {
     param([bool]$running)
     try {
-        $btnStart.Enabled = -not $running
-        $btnStop.Enabled = $running
-        $txtRoom.Enabled = -not $running
-        $txtNick.Enabled = -not $running
-        $chkNick.Enabled = -not $running
+        $script:txtRoom.Enabled = -not $running
+        $script:txtNick.Enabled = -not $running
+        $script:cmbQuality.Enabled = -not $running
         $script:statusRunning = $running
-        if ($running) {
-            $lblStatus.Text = 'CONNECTED'
-            $lblStatus.BackColor = [System.Drawing.Color]::Transparent
-            $lblStatus.ForeColor = Color-Hex '#1A6B18'
-            $lblStatusHint.Text = 'native process is running'
-        } else {
-            $lblStatus.Text = 'STOP'
-            $lblStatus.BackColor = [System.Drawing.Color]::Transparent
-            $lblStatus.ForeColor = $C_Orange
-            $lblStatusHint.Text = 'ready to connect'
-        }
-        try { $statusBox.Invalidate() } catch {}
+        $script:form.Invalidate()
     } catch {}
 }
 
@@ -300,371 +256,24 @@ function Stop-NativeProcess {
         }
     } catch {}
     Set-RunningUi $false
-    Update-VisualLayout
 }
 
-# ── Form ──────────────────────────────────────────────────────────────────────
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'Jitsi NDI'
-$form.Size = New-Object System.Drawing.Size(760, 690)
-$form.StartPosition = 'CenterScreen'
-$form.MinimumSize = New-Object System.Drawing.Size(740, 650)
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-$form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Show
-$form.Font = New-GuiFont 9.5
-$form.BackColor = [System.Drawing.Color]::White
-
-# Background: pure white body; orange-to-lemon gradient in top header strip only.
-$form.Add_Paint({
-    param($sender, $e)
-    try {
-        $g = $e.Graphics
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-
-        # White body below the header strip
-        $bodyRect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, $form.ClientSize.Height)
-        $g.FillRectangle([System.Drawing.Brushes]::White, $bodyRect)
-
-        # Orange header gradient: Lис (#FF9900) -> Лимончелло (#FFFA7D), 130px tall
-        $headerH = 130
-        $headerRect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, $headerH)
-        $gradBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-            $headerRect,
-            $C_Orange,
-            $C_White,
-            [System.Drawing.Drawing2D.LinearGradientMode]::Vertical
-        )
-        $g.FillRectangle($gradBrush, $headerRect)
-        $gradBrush.Dispose()
-
-        # Thin separator line at bottom of header strip
-        $sepPen = New-Object System.Drawing.Pen($C_Line, 1)
-        $g.DrawLine($sepPen, 0, $headerH, $form.ClientSize.Width, $headerH)
-        $sepPen.Dispose()
-    } catch {}
-})
-
-# ── Title ─────────────────────────────────────────────────────────────────────
-$lblLogo = New-Label 'Jitsi NDI' 0 26 760 70 33 $C_Asphalt ([System.Drawing.FontStyle]::Bold)
-$lblLogo.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-$form.Controls.Add($lblLogo)
-
-$lblSub = New-Label '' 0 88 760 24 11 $C_Asphalt ([System.Drawing.FontStyle]::Regular)
-$lblSub.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-$form.Controls.Add($lblSub)
-
-# ── Card shadow (behind the card, slightly offset) ────────────────────────────
-$cardShadow = New-Object System.Windows.Forms.Panel
-$cardShadow.Location = New-Object System.Drawing.Point(86, 132)
-$cardShadow.Size = New-Object System.Drawing.Size(596, 350)
-$cardShadow.BackColor = Color-Hex '#DDDAE8'
-$cardShadow.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-$form.Controls.Add($cardShadow)
-
-# ── Main card ─────────────────────────────────────────────────────────────────
-$card = New-Object System.Windows.Forms.Panel
-$card.Location = New-Object System.Drawing.Point(82, 128)
-$card.Size = New-Object System.Drawing.Size(596, 350)
-$card.BackColor = [System.Drawing.Color]::White
-$card.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-
-$card.Add_Paint({
-    param($sender, $e)
-    try {
-        $g = $e.Graphics
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-
-        # White fill with rounded corners (radius 8)
-        $r = New-Object System.Drawing.Rectangle(0, 0, ($card.Width - 1), ($card.Height - 1))
-        $path = New-RoundedPath $r 8
-        $g.FillPath([System.Drawing.Brushes]::White, $path)
-
-        # Border in brand line colour
-        $pen = New-Object System.Drawing.Pen($C_Border, 1)
-        $g.DrawPath($pen, $path)
-        $pen.Dispose()
-        $path.Dispose()
-
-        # Thin orange accent strip along the top edge of the card
-        $accentRect = New-Object System.Drawing.Rectangle(0, 0, ($card.Width - 1), 4)
-        $accentPath = New-RoundedPath $accentRect 8
-        $accentBrush = New-Object System.Drawing.SolidBrush($C_Orange)
-        $g.FillPath($accentBrush, $accentPath)
-        $accentBrush.Dispose()
-        $accentPath.Dispose()
-    } catch {}
-})
-$form.Controls.Add($card)
-
-# ── Form fields inside card ───────────────────────────────────────────────────
-$lblRoom = New-Label 'Meeting link' 36 32 130 24 10 $C_TextSoft
-$card.Controls.Add($lblRoom)
-
-$txtRoom = New-Object System.Windows.Forms.TextBox
-$txtRoom.Location = New-Object System.Drawing.Point(170, 29)
-$txtRoom.Size = New-Object System.Drawing.Size(370, 28)
-$txtRoom.Font = New-GuiFont 10
-$txtRoom.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-$txtRoom.BackColor = [System.Drawing.Color]::White
-$txtRoom.Text = ''
-$card.Controls.Add($txtRoom)
-
-$lblParsed = New-Label 'Room:' 170 61 370 20 8.8 $C_TextSoft
-$card.Controls.Add($lblParsed)
-
-$lblSpeaker = New-Label 'Speaker link' 36 92 130 24 10 $C_TextSoft
-$card.Controls.Add($lblSpeaker)
-
-$txtSpeakerLink = New-Object System.Windows.Forms.TextBox
-$script:txtSpeakerLink = $txtSpeakerLink
-$txtSpeakerLink.Location = New-Object System.Drawing.Point(170, 89)
-$txtSpeakerLink.Size = New-Object System.Drawing.Size(292, 28)
-$txtSpeakerLink.Font = New-GuiFont 8.8
-$txtSpeakerLink.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-$txtSpeakerLink.BackColor = [System.Drawing.Color]::White
-$txtSpeakerLink.ReadOnly = $true
-$card.Controls.Add($txtSpeakerLink)
-
-$cmbSpeakerQuality = New-Object System.Windows.Forms.ComboBox
-$script:cmbSpeakerQuality = $cmbSpeakerQuality
-$cmbSpeakerQuality.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-[void]$cmbSpeakerQuality.Items.Add('480p')
-[void]$cmbSpeakerQuality.Items.Add('540p')
-[void]$cmbSpeakerQuality.Items.Add('720p')
-[void]$cmbSpeakerQuality.Items.Add('1080p')
-$cmbSpeakerQuality.SelectedItem = '1080p'
-$cmbSpeakerQuality.Location = New-Object System.Drawing.Point(468, 89)
-$cmbSpeakerQuality.Size = New-Object System.Drawing.Size(78, 28)
-$cmbSpeakerQuality.Font = New-GuiFont 9
-$cmbSpeakerQuality.BackColor = [System.Drawing.Color]::White
-$cmbSpeakerQuality.ForeColor = $C_Asphalt
-$card.Controls.Add($cmbSpeakerQuality)
-
-$btnCopySpeaker = New-Object System.Windows.Forms.Button
-$btnCopySpeaker.Text = 'Copy'
-$btnCopySpeaker.Location = New-Object System.Drawing.Point(552, 87)
-$btnCopySpeaker.Size = New-Object System.Drawing.Size(68, 31)
-Set-ButtonStyle $btnCopySpeaker $C_Orange $C_Asphalt
-$card.Controls.Add($btnCopySpeaker)
-
-$lblNick = New-Label 'Your name' 36 148 130 24 10 $C_TextSoft
-$card.Controls.Add($lblNick)
-
-$txtNick = New-Object System.Windows.Forms.TextBox
-$txtNick.Location = New-Object System.Drawing.Point(170, 145)
-$txtNick.Size = New-Object System.Drawing.Size(370, 28)
-$txtNick.Font = New-GuiFont 10
-$txtNick.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-$txtNick.BackColor = [System.Drawing.Color]::White
-$txtNick.Text = 'STREAM'
-$card.Controls.Add($txtNick)
-
-$chkNick = New-Object System.Windows.Forms.CheckBox
-$chkNick.Text = 'send display name on next start'
-$chkNick.Location = New-Object System.Drawing.Point(170, 179)
-$chkNick.Size = New-Object System.Drawing.Size(260, 24)
-$chkNick.Font = New-GuiFont 9.5
-$chkNick.BackColor = [System.Drawing.Color]::Transparent
-$chkNick.ForeColor = $C_Asphalt
-$chkNick.Checked = $true
-$card.Controls.Add($chkNick)
-
-$lblNickNote = New-Label '' 170 206 370 22 8.8 $C_TextSoft
-$card.Controls.Add($lblNickNote)
-
-# ── Status area (borderless; pill drawn via Paint) ────────────────────────────
-$statusBox = New-Object System.Windows.Forms.Panel
-$statusBox.Location = New-Object System.Drawing.Point(36, 246)
-$statusBox.Size = New-Object System.Drawing.Size(504, 62)
-$statusBox.BackColor = [System.Drawing.Color]::Transparent
-$statusBox.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-
-$statusBox.Add_Paint({
-    param($sender, $e)
-    try {
-        $g = $e.Graphics
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-
-        # Light hairline separator above status row
-        $sepPen = New-Object System.Drawing.Pen($C_Line, 1)
-        $g.DrawLine($sepPen, 0, 0, $statusBox.Width, 0)
-        $sepPen.Dispose()
-
-        # Status pill background (rounded rectangle behind lblStatus)
-        $pillRect = New-Object System.Drawing.Rectangle(108, 10, 130, 34)
-        $pillColor = if ($script:statusRunning) { Color-Hex '#D4F5D2' } else { $C_Lav }
-        $pillPath = New-RoundedPath $pillRect 12
-        $pillBrush = New-Object System.Drawing.SolidBrush($pillColor)
-        $g.FillPath($pillBrush, $pillPath)
-        $pillBrush.Dispose()
-        $pillPath.Dispose()
-    } catch {}
-})
-$card.Controls.Add($statusBox)
-
-$lblStatusTitle = New-Label 'STATUS' 18 10 90 22 8.5 $C_TextSoft ([System.Drawing.FontStyle]::Bold)
-$statusBox.Controls.Add($lblStatusTitle)
-
-$lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Location = New-Object System.Drawing.Point(112, 12)
-$lblStatus.Size = New-Object System.Drawing.Size(120, 30)
-$lblStatus.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-$lblStatus.Font = New-GuiFont 11 ([System.Drawing.FontStyle]::Bold)
-$lblStatus.BackColor = [System.Drawing.Color]::Transparent
-$statusBox.Controls.Add($lblStatus)
-
-$lblStatusHint = New-Label 'ready to connect' 246 16 230 22 9 $C_TextSoft
-$statusBox.Controls.Add($lblStatusHint)
-
-# ── Footer ────────────────────────────────────────────────────────────────────
-$footer = New-Object System.Windows.Forms.Panel
-$footer.Location = New-Object System.Drawing.Point(0, 462)
-$footer.Size = New-Object System.Drawing.Size(760, 88)
-$footer.Anchor = 'Left,Right,Bottom'
-$footer.BackColor = $C_Dark
-$form.Controls.Add($footer)
-
-$btnStart = New-Object System.Windows.Forms.Button
-$btnStart.Text = 'CONNECT'
-$btnStart.Location = New-Object System.Drawing.Point(24, 22)
-$btnStart.Size = New-Object System.Drawing.Size(132, 42)
-Set-ButtonStyle $btnStart $C_Orange $C_Asphalt $true
-$footer.Controls.Add($btnStart)
-
-$btnStop = New-Object System.Windows.Forms.Button
-$btnStop.Text = 'STOP'
-$btnStop.Location = New-Object System.Drawing.Point(166, 22)
-$btnStop.Size = New-Object System.Drawing.Size(108, 42)
-$btnStop.Enabled = $false
-Set-ButtonStyle $btnStop $C_Purple $C_Mel $true
-$footer.Controls.Add($btnStop)
-
-$btnOpenLog = New-Object System.Windows.Forms.Button
-$btnOpenLog.Text = 'Open log'
-$btnOpenLog.Location = New-Object System.Drawing.Point(520, 22)
-$btnOpenLog.Size = New-Object System.Drawing.Size(96, 42)
-Set-ButtonStyle $btnOpenLog $C_Dark2 $C_Milk
-$footer.Controls.Add($btnOpenLog)
-
-$btnLogs = New-Object System.Windows.Forms.Button
-$btnLogs.Text = 'Logs folder'
-$btnLogs.Location = New-Object System.Drawing.Point(626, 22)
-$btnLogs.Size = New-Object System.Drawing.Size(110, 42)
-Set-ButtonStyle $btnLogs $C_Dark2 $C_Milk
-$footer.Controls.Add($btnLogs)
-
-# ── Compact log line above footer ─────────────────────────────────────────────
-$txtLog = New-Object System.Windows.Forms.TextBox
-$script:txtLog = $txtLog
-$txtLog.Location = New-Object System.Drawing.Point(82, 438)
-$txtLog.Size = New-Object System.Drawing.Size(596, 16)
-$txtLog.Multiline = $true
-$txtLog.ScrollBars = 'None'
-$txtLog.ReadOnly = $true
-$txtLog.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-$txtLog.BackColor = [System.Drawing.Color]::White
-$txtLog.ForeColor = $C_TextSoft
-$txtLog.Font = New-GuiFont 8.5
-$form.Controls.Add($txtLog)
-
-# ── Responsive layout ─────────────────────────────────────────────────────────
-function Update-VisualLayout {
-    try {
-        $w = [int]$form.ClientSize.Width
-        if ($w -lt 740) { $w = 740 }
-        $lblLogo.Width = $w
-        $lblSub.Width = $w
-        $cardW = [Math]::Min(680, [Math]::Max(596, $w - 96))
-        $card.Left = [int](($w - $cardW) / 2)
-        $card.Width = $cardW
-        $cardShadow.Left = $card.Left + 4
-        $cardShadow.Width = $card.Width
-        $fieldW = [Math]::Max(260, $card.Width - 226)
-        $txtRoom.Width = $fieldW
-        $lblParsed.Width = $fieldW
-        $copyW = 68
-        $qualityW = 78
-        $gap = 10
-        $txtSpeakerLink.Width = [Math]::Max(150, $fieldW - $qualityW - $copyW - ($gap * 2))
-        $cmbSpeakerQuality.Left = 170 + $txtSpeakerLink.Width + $gap
-        $cmbSpeakerQuality.Width = $qualityW
-        $btnCopySpeaker.Left = $cmbSpeakerQuality.Left + $qualityW + $gap
-        $txtNick.Width = $fieldW
-        $chkNick.Width = $fieldW
-        $lblNickNote.Width = $fieldW
-        $statusBox.Width = $card.Width - 72
-        $lblStatusHint.Width = [Math]::Max(120, $statusBox.Width - 266)
-        $footer.Top = $form.ClientSize.Height - 88
-        $footer.Width = $form.ClientSize.Width
-        $right = $form.ClientSize.Width - 24
-        $btnLogs.Left = $right - $btnLogs.Width
-        $btnOpenLog.Left = $btnLogs.Left - 10 - $btnOpenLog.Width
-        $txtLog.Left = $card.Left
-        $txtLog.Width = $card.Width
-        $txtLog.Top = $footer.Top - 20
-        $form.Invalidate()
-        $card.Invalidate()
-        $statusBox.Invalidate()
-    } catch {}
-}
-
-$form.Add_Resize({ Update-VisualLayout })
-
-$cmbSpeakerQuality.Add_SelectedIndexChanged({ Update-SpeakerLink })
-
-$txtRoom.Add_TextChanged({
-    try {
-        $room = Convert-JitsiInputToRoom $txtRoom.Text
-        if ($room) { $lblParsed.Text = "Room: $room" } else { $lblParsed.Text = 'Room:' }
-        Update-SpeakerLink
-    } catch {}
-})
-$lblParsed.Text = 'Room: ' + (Convert-JitsiInputToRoom $txtRoom.Text)
-Update-SpeakerLink
-
-$btnCopySpeaker.Add_Click({
-    try {
-        $link = Build-SpeakerLink $txtRoom.Text
-        if ([string]::IsNullOrWhiteSpace($link)) {
-            [System.Windows.Forms.MessageBox]::Show($form, 'Enter Jitsi link or room name first.', 'Speaker link', 'OK', 'Warning') | Out-Null
-            return
-        }
-        [System.Windows.Forms.Clipboard]::SetText($link)
-        Append-Log ("[GUI] Speaker link copied. Quality=" + (Get-SelectedSpeakerQuality))
-    } catch { Append-Log "[GUI] Copy speaker link failed: $($_.Exception.Message)" }
-})
-
-$btnOpenLog.Add_Click({
-    try {
-        if ($script:currentLogFile -and (Test-Path $script:currentLogFile)) {
-            Start-Process notepad.exe $script:currentLogFile
-        } else { Append-Log '[GUI] No GUI log file yet.' }
-    } catch { Append-Log "[GUI] Open log failed: $($_.Exception.Message)" }
-})
-
-$btnLogs.Add_Click({
-    try {
-        if (-not (Test-Path $script:logDir)) { New-Item -ItemType Directory -Force -Path $script:logDir | Out-Null }
-        Start-Process explorer.exe $script:logDir
-    } catch { Append-Log "[GUI] Open logs folder failed: $($_.Exception.Message)" }
-})
-
-$btnStart.Add_Click({
+function Start-Click {
     try {
         if ($script:proc -and -not $script:proc.HasExited) {
             Append-Log '[GUI] Native is already running.'
             return
         }
 
-        $room = Convert-JitsiInputToRoom $txtRoom.Text
+        $room = Convert-JitsiInputToRoom $script:txtRoom.Text
         if ([string]::IsNullOrWhiteSpace($room)) {
-            [System.Windows.Forms.MessageBox]::Show($form, 'Enter Jitsi link or room name.', 'Missing room', 'OK', 'Warning') | Out-Null
+            [System.Windows.Forms.MessageBox]::Show($script:form, 'Enter Jitsi link or room name.', 'Missing room', 'OK', 'Warning') | Out-Null
             return
         }
 
         $exe = Find-NativeExe
         if (-not $exe) {
-            [System.Windows.Forms.MessageBox]::Show($form, 'jitsi-ndi-native.exe not found in build folders.', 'Missing exe', 'OK', 'Error') | Out-Null
+            [System.Windows.Forms.MessageBox]::Show($script:form, 'jitsi-ndi-native.exe not found in build folders.', 'Missing exe', 'OK', 'Error') | Out-Null
             return
         }
 
@@ -674,10 +283,9 @@ $btnStart.Add_Click({
         Set-Content -LiteralPath $script:currentLogFile -Value '# Jitsi NDI GUI session log' -Encoding UTF8
 
         $argsList = @('--room', $room)
-        $nick = ("$($txtNick.Text)").Trim()
-        if ($chkNick.Checked -and -not [string]::IsNullOrWhiteSpace($nick)) {
+        $nick = ("$($script:txtNick.Text)").Trim()
+        if (-not [string]::IsNullOrWhiteSpace($nick)) {
             $argsList += @('--nick', $nick)
-        } else {
         }
 
         $arguments = Join-ProcessArgs $argsList
@@ -704,11 +312,238 @@ $btnStart.Add_Click({
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
-        Update-VisualLayout
+    }
+}
+
+function Log-Click {
+    try {
+        if (-not (Test-Path $script:logDir)) { New-Item -ItemType Directory -Force -Path $script:logDir | Out-Null }
+        Start-Process explorer.exe $script:logDir
+    } catch { Append-Log "[GUI] Open logs folder failed: $($_.Exception.Message)" }
+}
+
+function Copy-Click {
+    try {
+        $link = Build-SpeakerLink $script:txtRoom.Text
+        if ([string]::IsNullOrWhiteSpace($link)) {
+            [System.Windows.Forms.MessageBox]::Show($script:form, 'Enter Jitsi link or room name first.', 'Speaker link', 'OK', 'Warning') | Out-Null
+            return
+        }
+        [System.Windows.Forms.Clipboard]::SetText($link)
+        Append-Log ("[GUI] Speaker link copied. Quality=" + (Get-SelectedSpeakerQuality))
+    } catch { Append-Log "[GUI] Copy speaker link failed: $($_.Exception.Message)" }
+}
+
+# ── Form ──────────────────────────────────────────────────────────────────────
+$form = New-Object System.Windows.Forms.Form
+$script:form = $form
+$form.Text = 'Jitsi NDI'
+$form.Size = New-Object System.Drawing.Size(840, 580)
+$form.StartPosition = 'CenterScreen'
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+$form.MaximizeBox = $false
+$form.DoubleBuffered = $true
+
+# Controls
+$txtRoom = New-Object System.Windows.Forms.TextBox
+$script:txtRoom = $txtRoom
+$txtRoom.Location = New-Object System.Drawing.Point(125, 126)
+$txtRoom.Size = New-Object System.Drawing.Size(650, 24)
+$txtRoom.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$txtRoom.BackColor = $C_InputBg
+$txtRoom.ForeColor = $C_WhiteText
+$txtRoom.Font = $fontInput
+$txtRoom.Text = ''
+$form.Controls.Add($txtRoom)
+
+$txtSpeakerLink = New-Object System.Windows.Forms.TextBox
+$script:txtSpeakerLink = $txtSpeakerLink
+$txtSpeakerLink.Location = New-Object System.Drawing.Point(125, 226)
+$txtSpeakerLink.Size = New-Object System.Drawing.Size(430, 24)
+$txtSpeakerLink.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$txtSpeakerLink.BackColor = $C_InputBg
+$txtSpeakerLink.ForeColor = $C_WhiteText
+$txtSpeakerLink.Font = $fontInput
+$txtSpeakerLink.ReadOnly = $true
+$form.Controls.Add($txtSpeakerLink)
+
+$cmbQuality = New-Object System.Windows.Forms.ComboBox
+$script:cmbQuality = $cmbQuality
+$cmbQuality.Location = New-Object System.Drawing.Point(650, 223)
+$cmbQuality.Size = New-Object System.Drawing.Size(120, 28)
+$cmbQuality.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$cmbQuality.BackColor = $C_InputBg
+$cmbQuality.ForeColor = $C_WhiteText
+$cmbQuality.Font = $fontInput
+$cmbQuality.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+[void]$cmbQuality.Items.Add('480p')
+[void]$cmbQuality.Items.Add('540p')
+[void]$cmbQuality.Items.Add('720p')
+[void]$cmbQuality.Items.Add('1080p')
+$cmbQuality.SelectedItem = '1080p'
+$form.Controls.Add($cmbQuality)
+
+$txtNick = New-Object System.Windows.Forms.TextBox
+$script:txtNick = $txtNick
+$txtNick.Location = New-Object System.Drawing.Point(125, 326)
+$txtNick.Size = New-Object System.Drawing.Size(650, 24)
+$txtNick.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$txtNick.BackColor = $C_InputBg
+$txtNick.ForeColor = $C_WhiteText
+$txtNick.Font = $fontInput
+$txtNick.Text = 'STREAM'
+$form.Controls.Add($txtNick)
+
+# Interactive Regions
+$btnConnectRect = New-Object System.Drawing.Rectangle(40, 420, 360, 60)
+$btnStopRect    = New-Object System.Drawing.Rectangle(420, 420, 370, 60)
+$btnLogRect     = New-Object System.Drawing.Rectangle(600, 30, 190, 40)
+$btnCopyRect    = New-Object System.Drawing.Rectangle(565, 215, 75, 46)
+
+$script:hoverConnect = $false
+$script:hoverStop = $false
+$script:hoverLog = $false
+$script:hoverCopy = $false
+
+$form.Add_MouseMove({
+    param($sender, $e)
+    $x = $e.X; $y = $e.Y
+    $newHoverC = $btnConnectRect.Contains($x, $y)
+    $newHoverS = $btnStopRect.Contains($x, $y)
+    $newHoverL = $btnLogRect.Contains($x, $y)
+    $newHoverCp = $btnCopyRect.Contains($x, $y)
+    
+    if ($newHoverC -ne $script:hoverConnect -or $newHoverS -ne $script:hoverStop -or $newHoverL -ne $script:hoverLog -or $newHoverCp -ne $script:hoverCopy) {
+        $script:hoverConnect = $newHoverC
+        $script:hoverStop = $newHoverS
+        $script:hoverLog = $newHoverL
+        $script:hoverCopy = $newHoverCp
+        if ($newHoverC -or $newHoverS -or $newHoverL -or $newHoverCp) {
+            $form.Cursor = [System.Windows.Forms.Cursors]::Hand
+        } else {
+            $form.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+        $form.Invalidate()
     }
 })
 
-$btnStop.Add_Click({ Stop-NativeProcess 'Stop button' })
+$form.Add_MouseClick({
+    param($sender, $e)
+    $x = $e.X; $y = $e.Y
+    if ($btnConnectRect.Contains($x, $y)) { Start-Click }
+    if ($btnStopRect.Contains($x, $y)) { Stop-NativeProcess 'Stop button' }
+    if ($btnLogRect.Contains($x, $y)) { Log-Click }
+    if ($btnCopyRect.Contains($x, $y)) { Copy-Click }
+})
+
+# Paint Event
+$form.Add_Paint({
+    param($sender, $e)
+    try {
+        $g = $e.Graphics
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+
+        # 1. Fill base dark background
+        $g.Clear($C_BgPurple)
+
+        # 2. Draw glow at bottom left
+        $glowPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $glowPath.AddEllipse(-150, $form.ClientSize.Height - 250, 500, 500)
+        $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush($glowPath)
+        $pgb.CenterColor = [System.Drawing.Color]::FromArgb(140, 255, 153, 0)
+        $pgb.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 255, 153, 0))
+        $g.FillPath($pgb, $glowPath)
+        $pgb.Dispose(); $glowPath.Dispose()
+
+        # Brushes & Pens
+        $bWhite = New-Object System.Drawing.SolidBrush($C_WhiteText)
+        $bOrange = New-Object System.Drawing.SolidBrush($C_Orange)
+        $bInput = New-Object System.Drawing.SolidBrush($C_InputBg)
+        $bIcon = New-Object System.Drawing.SolidBrush($C_IconBg)
+        $penBorder = New-Object System.Drawing.Pen($C_InputBorder, 1)
+
+        # 3. Draw Title
+        $g.DrawString("Jitsi", $fontTitle, $bWhite, 40, 25)
+        $jitsiSize = $g.MeasureString("Jitsi ", $fontTitle)
+        $g.DrawString("NDI", $fontTitle, $bOrange, 40 + $jitsiSize.Width - 15, 25)
+
+        # 4. Draw Labels
+        $g.DrawString("ВСТАВЬТЕ ССЫЛКУ НА КОНФЕРЕНЦИЮ JITSI", $fontLabel, $bWhite, 110, 85)
+        $g.DrawString("ССЫЛКА ДЛЯ СПИКЕРА", $fontLabel, $bWhite, 110, 185)
+        $g.DrawString("ВЫБЕРИТЕ НИК", $fontLabel, $bWhite, 110, 285)
+
+        # 5. Draw Input Backgrounds
+        function Draw-Box($x, $y, $w, $h, $brush) {
+            $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+            $p = New-RoundedPath $rect 10
+            $g.FillPath($brush, $p)
+            $g.DrawPath($penBorder, $p)
+            $p.Dispose()
+        }
+
+        Draw-Box 110 115 680 46 $bInput
+        Draw-Box 110 215 440 46 $bInput
+        Draw-Box 640 215 150 46 $bInput # Combobox wrapper
+        Draw-Box 110 315 680 46 $bInput
+
+        # 6. Draw Icon Boxes
+        Draw-Box 40 115 50 46 $bIcon
+        Draw-Box 40 215 50 46 $bIcon
+        Draw-Box 40 315 50 46 $bIcon
+        
+        # Simple glyphs for icons
+        $g.DrawString(">", $fontIcon, $bOrange, 50, 122)
+        $g.DrawString("@", $fontIcon, $bOrange, 50, 222)
+        $g.DrawString("ID", $fontIcon, $bOrange, 50, 322)
+
+        # 7. Draw Buttons
+        # CONNECT Button
+        $cPath = New-RoundedPath $btnConnectRect 14
+        $cBrush = if ($script:hoverConnect) { New-Object System.Drawing.SolidBrush($C_OrangeHover) } else { New-Object System.Drawing.SolidBrush($C_Orange) }
+        $g.FillPath($cBrush, $cPath)
+        $g.DrawString("CONNECT", $fontBtn, $bWhite, $btnConnectRect.X + 130, $btnConnectRect.Y + 20)
+        $cPath.Dispose(); $cBrush.Dispose()
+
+        # STOP Button
+        $sPath = New-RoundedPath $btnStopRect 14
+        $sBrush = if ($script:hoverStop) { New-Object System.Drawing.SolidBrush($C_IconBg) } else { New-Object System.Drawing.SolidBrush($C_DarkButton) }
+        $g.FillPath($sBrush, $sPath)
+        $penOrange = New-Object System.Drawing.Pen($C_Orange, 2)
+        $g.DrawPath($penOrange, $sPath)
+        $g.DrawString("STOP", $fontBtn, $bOrange, $btnStopRect.X + 150, $btnStopRect.Y + 20)
+        $sPath.Dispose(); $sBrush.Dispose()
+
+        # OPEN LOG FOLDER Button
+        $lPath = New-RoundedPath $btnLogRect 10
+        $lBrush = if ($script:hoverLog) { New-Object System.Drawing.SolidBrush($C_IconBg) } else { New-Object System.Drawing.SolidBrush($C_BgPurple) }
+        $g.FillPath($lBrush, $lPath)
+        $g.DrawPath($penOrange, $lPath)
+        $g.DrawString("OPEN LOG FOLDER", $fontLabel, $bOrange, $btnLogRect.X + 25, $btnLogRect.Y + 10)
+        $lPath.Dispose(); $lBrush.Dispose()
+
+        # COPY Button
+        $cpPath = New-RoundedPath $btnCopyRect 10
+        $cpBrush = if ($script:hoverCopy) { New-Object System.Drawing.SolidBrush($C_OrangeHover) } else { New-Object System.Drawing.SolidBrush($C_Orange) }
+        $g.FillPath($cpBrush, $cpPath)
+        $g.DrawString("COPY", $fontLabel, $bWhite, $btnCopyRect.X + 12, $btnCopyRect.Y + 14)
+        $cpPath.Dispose(); $cpBrush.Dispose()
+
+        # Status Line
+        $statusStr = if ($script:statusRunning) { "STATUS: CONNECTED" } else { "STATUS: READY" }
+        $cStatus = if ($script:statusRunning) { $C_Green } else { $C_LabelText }
+        $bStatus = New-Object System.Drawing.SolidBrush($cStatus)
+        $g.DrawString($statusStr, $fontInput, $bStatus, 40, $form.ClientSize.Height - 35)
+
+        $bWhite.Dispose(); $bOrange.Dispose(); $bInput.Dispose(); $bIcon.Dispose(); $penBorder.Dispose(); $bStatus.Dispose(); $penOrange.Dispose()
+    } catch {}
+})
+
+$script:txtRoom.Add_TextChanged({
+    try { Update-SpeakerLink } catch {}
+})
+Update-SpeakerLink
+$script:cmbQuality.Add_SelectedIndexChanged({ Update-SpeakerLink })
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
@@ -716,15 +551,8 @@ $timer.Add_Tick({
     try {
         if ($script:proc) {
             if ($script:proc.HasExited) {
-                if (-not $script:isStopping) { Append-Log "[GUI] Native exited with code $($script:proc.ExitCode)." }
                 $script:proc = $null
                 Set-RunningUi $false
-                Update-VisualLayout
-            } else {
-                if ($script:nativeStartedAt) {
-                    $elapsed = [int]((Get-Date) - $script:nativeStartedAt).TotalSeconds
-                    $lblStatusHint.Text = "native process running: ${elapsed}s"
-                }
             }
         }
     } catch {}
@@ -736,8 +564,8 @@ $form.Add_FormClosing({
     try {
         if ($script:proc -and -not $script:proc.HasExited) {
             $result = [System.Windows.Forms.MessageBox]::Show(
-                $form,
-                'Native process is still running. YES = stop native and close. NO = close GUI only, keep NDI running. CANCEL = keep GUI open.',
+                $script:form,
+                'Native process is still running. YES = stop native and close. NO = close GUI only. CANCEL = keep GUI open.',
                 'Close GUI?',
                 [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
                 [System.Windows.Forms.MessageBoxIcon]::Question
@@ -749,13 +577,9 @@ $form.Add_FormClosing({
             if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
                 Stop-NativeProcess 'GUI closing'
             }
-            if ($result -eq [System.Windows.Forms.DialogResult]::No) {
-                Append-Log '[GUI] Closing GUI only; native left running.'
-            }
         }
     } catch {}
 })
 
 Set-RunningUi $false
-Update-VisualLayout
 [void]$form.ShowDialog()
