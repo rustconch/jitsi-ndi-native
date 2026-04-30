@@ -40,6 +40,7 @@ $C_OrangeHover = Color-Hex '#FFAD40'
 $C_IconBg      = Color-Hex '#31266B'
 $C_DarkButton  = Color-Hex '#1C153E'
 $C_Green       = Color-Hex '#6DDD65'
+$C_Red         = Color-Hex '#FF4D4D'
 
 function New-RoundedPath {
     param([System.Drawing.Rectangle]$Rect, [int]$Radius)
@@ -97,10 +98,10 @@ function New-GuiFont {
 }
 
 $fontTitle = New-GuiFont 28 ([System.Drawing.FontStyle]::Bold) $true
-$fontLabel = New-GuiFont 11 ([System.Drawing.FontStyle]::Regular) $false
-$fontInput = New-GuiFont 12 ([System.Drawing.FontStyle]::Regular) $false
+$fontLabel = New-GuiFont 10 ([System.Drawing.FontStyle]::Regular) $false
+$fontInput = New-GuiFont 11 ([System.Drawing.FontStyle]::Regular) $false
 $fontBtn   = New-GuiFont 13 ([System.Drawing.FontStyle]::Bold) $false
-$fontIcon  = New-GuiFont 18 ([System.Drawing.FontStyle]::Bold) $false
+$fontIcon  = New-GuiFont 16 ([System.Drawing.FontStyle]::Bold) $false
 
 # Data Methods
 function Convert-JitsiInputToRoom {
@@ -241,7 +242,7 @@ function Set-RunningUi {
         $script:txtNick.Enabled = -not $running
         $script:cmbQuality.Enabled = -not $running
         $script:statusRunning = $running
-        $script:form.Invalidate()
+        if ($script:statusRect) { $script:form.Invalidate($script:statusRect) }
     } catch {}
 }
 
@@ -280,7 +281,11 @@ function Start-Click {
         if (-not (Test-Path $script:logDir)) { New-Item -ItemType Directory -Force -Path $script:logDir | Out-Null }
         $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
         $script:currentLogFile = Join-Path $script:logDir "jitsi-ndi-gui_$stamp.log"
+        $nativeLogFile = Join-Path $script:logDir "jitsi-ndi-native_$stamp.log"
+        $nativeErrFile = Join-Path $script:logDir "jitsi-ndi-native_err_$stamp.log"
         Set-Content -LiteralPath $script:currentLogFile -Value '# Jitsi NDI GUI session log' -Encoding UTF8
+        Set-Content -LiteralPath $nativeLogFile -Value '# Jitsi NDI Native execution log' -Encoding UTF8
+        Set-Content -LiteralPath $nativeErrFile -Value '# Jitsi NDI Native error log' -Encoding UTF8
 
         $argsList = @('--room', $room)
         $nick = ("$($script:txtNick.Text)").Trim()
@@ -291,24 +296,13 @@ function Start-Click {
         $arguments = Join-ProcessArgs $argsList
         $script:lastCommand = (Quote-Arg $exe) + ' ' + $arguments
 
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $exe
-        $psi.Arguments = $arguments
-        $psi.WorkingDirectory = Split-Path -Parent $exe
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $false
-        $psi.RedirectStandardError = $false
-        $psi.CreateNoWindow = $false
-
-        $p = New-Object System.Diagnostics.Process
-        $p.StartInfo = $psi
-        $ok = $p.Start()
-        if (-not $ok) { throw 'Process.Start returned false.' }
+        $p = Start-Process -FilePath $exe -ArgumentList $argsList -WorkingDirectory (Split-Path -Parent $exe) -WindowStyle Hidden -RedirectStandardOutput $nativeLogFile -RedirectStandardError $nativeErrFile -PassThru
+        if (-not $p) { throw 'Start-Process failed.' }
         $script:proc = $p
         $script:nativeStartedAt = Get-Date
         $script:isStopping = $false
         Set-RunningUi $true
-        Append-Log "[GUI] Started. PID=$($p.Id)"
+        Append-Log "[GUI] Started native process. Output written to $nativeLogFile. PID=$($p.Id)"
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
@@ -338,17 +332,26 @@ function Copy-Click {
 $form = New-Object System.Windows.Forms.Form
 $script:form = $form
 $form.Text = 'Jitsi NDI'
-$form.Size = New-Object System.Drawing.Size(840, 580)
+$form.Size = New-Object System.Drawing.Size(900, 660)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
 $form.MaximizeBox = $false
-$form.DoubleBuffered = $true
+$form.BackColor = $C_BgPurple
+$flags = [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
+$form.GetType().GetProperty('DoubleBuffered', $flags).SetValue($form, $true, $null)
+
+# Interactive Regions
+$script:btnConnectRect = New-Object System.Drawing.Rectangle(40, 430, 395, 60)
+$script:btnStopRect    = New-Object System.Drawing.Rectangle(450, 430, 395, 60)
+$script:btnLogRect     = New-Object System.Drawing.Rectangle(665, 30, 180, 40)
+$script:btnCopyRect    = New-Object System.Drawing.Rectangle(525, 235, 80, 40)
+$script:statusRect     = New-Object System.Drawing.Rectangle(40, 520, 805, 40)
 
 # Controls
 $txtRoom = New-Object System.Windows.Forms.TextBox
 $script:txtRoom = $txtRoom
-$txtRoom.Location = New-Object System.Drawing.Point(125, 126)
-$txtRoom.Size = New-Object System.Drawing.Size(650, 24)
+$txtRoom.Location = New-Object System.Drawing.Point(125, 134)
+$txtRoom.Size = New-Object System.Drawing.Size(705, 24)
 $txtRoom.BorderStyle = [System.Windows.Forms.BorderStyle]::None
 $txtRoom.BackColor = $C_InputBg
 $txtRoom.ForeColor = $C_WhiteText
@@ -358,8 +361,8 @@ $form.Controls.Add($txtRoom)
 
 $txtSpeakerLink = New-Object System.Windows.Forms.TextBox
 $script:txtSpeakerLink = $txtSpeakerLink
-$txtSpeakerLink.Location = New-Object System.Drawing.Point(125, 226)
-$txtSpeakerLink.Size = New-Object System.Drawing.Size(430, 24)
+$txtSpeakerLink.Location = New-Object System.Drawing.Point(125, 244)
+$txtSpeakerLink.Size = New-Object System.Drawing.Size(380, 24)
 $txtSpeakerLink.BorderStyle = [System.Windows.Forms.BorderStyle]::None
 $txtSpeakerLink.BackColor = $C_InputBg
 $txtSpeakerLink.ForeColor = $C_WhiteText
@@ -369,8 +372,8 @@ $form.Controls.Add($txtSpeakerLink)
 
 $cmbQuality = New-Object System.Windows.Forms.ComboBox
 $script:cmbQuality = $cmbQuality
-$cmbQuality.Location = New-Object System.Drawing.Point(650, 223)
-$cmbQuality.Size = New-Object System.Drawing.Size(120, 28)
+$cmbQuality.Location = New-Object System.Drawing.Point(650, 241)
+$cmbQuality.Size = New-Object System.Drawing.Size(180, 28)
 $cmbQuality.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $cmbQuality.BackColor = $C_InputBg
 $cmbQuality.ForeColor = $C_WhiteText
@@ -385,20 +388,14 @@ $form.Controls.Add($cmbQuality)
 
 $txtNick = New-Object System.Windows.Forms.TextBox
 $script:txtNick = $txtNick
-$txtNick.Location = New-Object System.Drawing.Point(125, 326)
-$txtNick.Size = New-Object System.Drawing.Size(650, 24)
+$txtNick.Location = New-Object System.Drawing.Point(125, 354)
+$txtNick.Size = New-Object System.Drawing.Size(705, 24)
 $txtNick.BorderStyle = [System.Windows.Forms.BorderStyle]::None
 $txtNick.BackColor = $C_InputBg
 $txtNick.ForeColor = $C_WhiteText
 $txtNick.Font = $fontInput
 $txtNick.Text = 'STREAM'
 $form.Controls.Add($txtNick)
-
-# Interactive Regions
-$btnConnectRect = New-Object System.Drawing.Rectangle(40, 420, 360, 60)
-$btnStopRect    = New-Object System.Drawing.Rectangle(420, 420, 370, 60)
-$btnLogRect     = New-Object System.Drawing.Rectangle(600, 30, 190, 40)
-$btnCopyRect    = New-Object System.Drawing.Rectangle(565, 215, 75, 46)
 
 $script:hoverConnect = $false
 $script:hoverStop = $false
@@ -408,33 +405,95 @@ $script:hoverCopy = $false
 $form.Add_MouseMove({
     param($sender, $e)
     $x = $e.X; $y = $e.Y
-    $newHoverC = $btnConnectRect.Contains($x, $y)
-    $newHoverS = $btnStopRect.Contains($x, $y)
-    $newHoverL = $btnLogRect.Contains($x, $y)
-    $newHoverCp = $btnCopyRect.Contains($x, $y)
+    $newHoverC  = $script:btnConnectRect.Contains($x, $y)
+    $newHoverS  = $script:btnStopRect.Contains($x, $y)
+    $newHoverL  = $script:btnLogRect.Contains($x, $y)
+    $newHoverCp = $script:btnCopyRect.Contains($x, $y)
     
-    if ($newHoverC -ne $script:hoverConnect -or $newHoverS -ne $script:hoverStop -or $newHoverL -ne $script:hoverLog -or $newHoverCp -ne $script:hoverCopy) {
-        $script:hoverConnect = $newHoverC
-        $script:hoverStop = $newHoverS
-        $script:hoverLog = $newHoverL
-        $script:hoverCopy = $newHoverCp
+    $changed = $false
+    if ($newHoverC -ne $script:hoverConnect) { $script:hoverConnect = $newHoverC; $form.Invalidate($script:btnConnectRect); $changed = $true }
+    if ($newHoverS -ne $script:hoverStop)    { $script:hoverStop = $newHoverS;       $form.Invalidate($script:btnStopRect); $changed = $true }
+    if ($newHoverL -ne $script:hoverLog)     { $script:hoverLog = $newHoverL;         $form.Invalidate($script:btnLogRect); $changed = $true }
+    if ($newHoverCp -ne $script:hoverCopy)   { $script:hoverCopy = $newHoverCp;       $form.Invalidate($script:btnCopyRect); $changed = $true }
+    
+    if ($changed) {
         if ($newHoverC -or $newHoverS -or $newHoverL -or $newHoverCp) {
             $form.Cursor = [System.Windows.Forms.Cursors]::Hand
         } else {
             $form.Cursor = [System.Windows.Forms.Cursors]::Default
         }
-        $form.Invalidate()
     }
 })
 
 $form.Add_MouseClick({
     param($sender, $e)
     $x = $e.X; $y = $e.Y
-    if ($btnConnectRect.Contains($x, $y)) { Start-Click }
-    if ($btnStopRect.Contains($x, $y)) { Stop-NativeProcess 'Stop button' }
-    if ($btnLogRect.Contains($x, $y)) { Log-Click }
-    if ($btnCopyRect.Contains($x, $y)) { Copy-Click }
+    if ($script:btnConnectRect.Contains($x, $y)) { Start-Click }
+    if ($script:btnStopRect.Contains($x, $y)) { Stop-NativeProcess 'Stop button' }
+    if ($script:btnLogRect.Contains($x, $y)) { Log-Click }
+    if ($script:btnCopyRect.Contains($x, $y)) { Copy-Click }
 })
+
+$script:bgImage = $null
+function Get-CachedBackground {
+    if (-not $script:bgImage) {
+        $bmp = New-Object System.Drawing.Bitmap($form.ClientSize.Width, $form.ClientSize.Height)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.Clear($C_BgPurple)
+        
+        $glowPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $glowPath.AddEllipse(-150, $form.ClientSize.Height - 300, 600, 600)
+        $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush($glowPath)
+        $pgb.CenterColor = [System.Drawing.Color]::FromArgb(160, 255, 153, 0)
+        $pgb.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 255, 153, 0))
+        $g.FillPath($pgb, $glowPath)
+        $pgb.Dispose(); $glowPath.Dispose()
+
+        $bWhite = New-Object System.Drawing.SolidBrush($C_WhiteText)
+        $bOrange = New-Object System.Drawing.SolidBrush($C_Orange)
+        $bInput = New-Object System.Drawing.SolidBrush($C_InputBg)
+        $bIcon = New-Object System.Drawing.SolidBrush($C_IconBg)
+        $penBorder = New-Object System.Drawing.Pen($C_InputBorder, 1)
+
+        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
+        $g.DrawString("Jitsi", $fontTitle, $bWhite, 40, 25)
+        $jitsiSize = $g.MeasureString("Jitsi ", $fontTitle)
+        $g.DrawString("NDI", $fontTitle, $bOrange, 40 + $jitsiSize.Width - 15, 25)
+
+        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $g.DrawString("ВСТАВЬТЕ ССЫЛКУ НА КОНФЕРЕНЦИЮ JITSI", $fontLabel, $bWhite, 110, 95)
+        $g.DrawString("ССЫЛКА ДЛЯ СПИКЕРА", $fontLabel, $bWhite, 110, 205)
+        $g.DrawString("ВЫБЕРИТЕ НИК", $fontLabel, $bWhite, 110, 315)
+
+        function Draw-StaticBox($x, $y, $w, $h, $brush) {
+            $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+            $p = New-RoundedPath $rect 10
+            $g.FillPath($brush, $p)
+            $g.DrawPath($penBorder, $p)
+            $p.Dispose()
+        }
+
+        Draw-StaticBox 110 120 735 50 $bInput
+        Draw-StaticBox 110 230 405 50 $bInput
+        Draw-StaticBox 635 230 210 50 $bInput
+        Draw-StaticBox 110 340 735 50 $bInput
+
+        Draw-StaticBox 40 120 50 50 $bIcon
+        Draw-StaticBox 40 230 50 50 $bIcon
+        Draw-StaticBox 40 340 50 50 $bIcon
+        
+        $g.DrawString(">", $fontIcon, $bOrange, 53, 131)
+        $g.DrawString("@", $fontIcon, $bOrange, 51, 241)
+        $g.DrawString("ID", $fontIcon, $bOrange, 51, 351)
+
+        $bWhite.Dispose(); $bOrange.Dispose(); $bInput.Dispose(); $bIcon.Dispose(); $penBorder.Dispose()
+        $g.Dispose()
+
+        $script:bgImage = $bmp
+    }
+    return $script:bgImage
+}
 
 # Paint Event
 $form.Add_Paint({
@@ -444,98 +503,60 @@ $form.Add_Paint({
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
 
-        # 1. Fill base dark background
-        $g.Clear($C_BgPurple)
+        # 1. Draw fully cached static background
+        $g.DrawImage((Get-CachedBackground), 0, 0)
 
-        # 2. Draw glow at bottom left
-        $glowPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-        $glowPath.AddEllipse(-150, $form.ClientSize.Height - 250, 500, 500)
-        $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush($glowPath)
-        $pgb.CenterColor = [System.Drawing.Color]::FromArgb(140, 255, 153, 0)
-        $pgb.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 255, 153, 0))
-        $g.FillPath($pgb, $glowPath)
-        $pgb.Dispose(); $glowPath.Dispose()
-
-        # Brushes & Pens
+        # 2. Draw dynamic elements (buttons and status)
         $bWhite = New-Object System.Drawing.SolidBrush($C_WhiteText)
         $bOrange = New-Object System.Drawing.SolidBrush($C_Orange)
-        $bInput = New-Object System.Drawing.SolidBrush($C_InputBg)
-        $bIcon = New-Object System.Drawing.SolidBrush($C_IconBg)
-        $penBorder = New-Object System.Drawing.Pen($C_InputBorder, 1)
-
-        # 3. Draw Title
-        $g.DrawString("Jitsi", $fontTitle, $bWhite, 40, 25)
-        $jitsiSize = $g.MeasureString("Jitsi ", $fontTitle)
-        $g.DrawString("NDI", $fontTitle, $bOrange, 40 + $jitsiSize.Width - 15, 25)
-
-        # 4. Draw Labels
-        $g.DrawString("ВСТАВЬТЕ ССЫЛКУ НА КОНФЕРЕНЦИЮ JITSI", $fontLabel, $bWhite, 110, 85)
-        $g.DrawString("ССЫЛКА ДЛЯ СПИКЕРА", $fontLabel, $bWhite, 110, 185)
-        $g.DrawString("ВЫБЕРИТЕ НИК", $fontLabel, $bWhite, 110, 285)
-
-        # 5. Draw Input Backgrounds
-        function Draw-Box($x, $y, $w, $h, $brush) {
-            $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
-            $p = New-RoundedPath $rect 10
-            $g.FillPath($brush, $p)
-            $g.DrawPath($penBorder, $p)
-            $p.Dispose()
-        }
-
-        Draw-Box 110 115 680 46 $bInput
-        Draw-Box 110 215 440 46 $bInput
-        Draw-Box 640 215 150 46 $bInput # Combobox wrapper
-        Draw-Box 110 315 680 46 $bInput
-
-        # 6. Draw Icon Boxes
-        Draw-Box 40 115 50 46 $bIcon
-        Draw-Box 40 215 50 46 $bIcon
-        Draw-Box 40 315 50 46 $bIcon
-        
-        # Simple glyphs for icons
-        $g.DrawString(">", $fontIcon, $bOrange, 50, 122)
-        $g.DrawString("@", $fontIcon, $bOrange, 50, 222)
-        $g.DrawString("ID", $fontIcon, $bOrange, 50, 322)
+        $penOrange = New-Object System.Drawing.Pen($C_Orange, 2)
 
         # 7. Draw Buttons
         # CONNECT Button
-        $cPath = New-RoundedPath $btnConnectRect 14
+        $cPath = New-RoundedPath $script:btnConnectRect 14
         $cBrush = if ($script:hoverConnect) { New-Object System.Drawing.SolidBrush($C_OrangeHover) } else { New-Object System.Drawing.SolidBrush($C_Orange) }
         $g.FillPath($cBrush, $cPath)
-        $g.DrawString("CONNECT", $fontBtn, $bWhite, $btnConnectRect.X + 130, $btnConnectRect.Y + 20)
+        $g.DrawString("CONNECT", $fontBtn, $bWhite, $script:btnConnectRect.X + 150, $script:btnConnectRect.Y + 20)
         $cPath.Dispose(); $cBrush.Dispose()
 
         # STOP Button
-        $sPath = New-RoundedPath $btnStopRect 14
+        $sPath = New-RoundedPath $script:btnStopRect 14
         $sBrush = if ($script:hoverStop) { New-Object System.Drawing.SolidBrush($C_IconBg) } else { New-Object System.Drawing.SolidBrush($C_DarkButton) }
         $g.FillPath($sBrush, $sPath)
         $penOrange = New-Object System.Drawing.Pen($C_Orange, 2)
         $g.DrawPath($penOrange, $sPath)
-        $g.DrawString("STOP", $fontBtn, $bOrange, $btnStopRect.X + 150, $btnStopRect.Y + 20)
+        $g.DrawString("STOP", $fontBtn, $bOrange, $script:btnStopRect.X + 175, $script:btnStopRect.Y + 20)
         $sPath.Dispose(); $sBrush.Dispose()
 
         # OPEN LOG FOLDER Button
-        $lPath = New-RoundedPath $btnLogRect 10
+        $lPath = New-RoundedPath $script:btnLogRect 10
         $lBrush = if ($script:hoverLog) { New-Object System.Drawing.SolidBrush($C_IconBg) } else { New-Object System.Drawing.SolidBrush($C_BgPurple) }
         $g.FillPath($lBrush, $lPath)
         $g.DrawPath($penOrange, $lPath)
-        $g.DrawString("OPEN LOG FOLDER", $fontLabel, $bOrange, $btnLogRect.X + 25, $btnLogRect.Y + 10)
+        $g.DrawString("OPEN LOG FOLDER", $fontLabel, $bOrange, $script:btnLogRect.X + 25, $script:btnLogRect.Y + 11)
         $lPath.Dispose(); $lBrush.Dispose()
 
         # COPY Button
-        $cpPath = New-RoundedPath $btnCopyRect 10
+        $cpPath = New-RoundedPath $script:btnCopyRect 10
         $cpBrush = if ($script:hoverCopy) { New-Object System.Drawing.SolidBrush($C_OrangeHover) } else { New-Object System.Drawing.SolidBrush($C_Orange) }
         $g.FillPath($cpBrush, $cpPath)
-        $g.DrawString("COPY", $fontLabel, $bWhite, $btnCopyRect.X + 12, $btnCopyRect.Y + 14)
+        $g.DrawString("COPY", $fontLabel, $bWhite, $script:btnCopyRect.X + 18, $script:btnCopyRect.Y + 11)
         $cpPath.Dispose(); $cpBrush.Dispose()
 
-        # Status Line
-        $statusStr = if ($script:statusRunning) { "STATUS: CONNECTED" } else { "STATUS: READY" }
-        $cStatus = if ($script:statusRunning) { $C_Green } else { $C_LabelText }
-        $bStatus = New-Object System.Drawing.SolidBrush($cStatus)
-        $g.DrawString($statusStr, $fontInput, $bStatus, 40, $form.ClientSize.Height - 35)
+        # Status Rectangle (Spanning full width under buttons)
+        $statusPath = New-RoundedPath $script:statusRect 10
+        if ($script:statusRunning) {
+            $sb = New-Object System.Drawing.SolidBrush($C_Green)
+            $g.FillPath($sb, $statusPath)
+            $g.DrawString("CONNECTED", $fontLabel, $bWhite, $script:statusRect.X + 355, $script:statusRect.Y + 11)
+        } else {
+            $sb = New-Object System.Drawing.SolidBrush($C_Red)
+            $g.FillPath($sb, $statusPath)
+            $g.DrawString("STOP", $fontLabel, $bWhite, $script:statusRect.X + 380, $script:statusRect.Y + 11)
+        }
+        $sb.Dispose(); $statusPath.Dispose()
 
-        $bWhite.Dispose(); $bOrange.Dispose(); $bInput.Dispose(); $bIcon.Dispose(); $penBorder.Dispose(); $bStatus.Dispose(); $penOrange.Dispose()
+        $bWhite.Dispose(); $bOrange.Dispose(); $penOrange.Dispose()
     } catch {}
 })
 

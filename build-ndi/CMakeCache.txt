@@ -337,6 +337,9 @@ FETCHCONTENT_UPDATES_DISCONNECTED:BOOL=OFF
 //Enables UPDATE_DISCONNECTED behavior just for population of libdatachannel
 FETCHCONTENT_UPDATES_DISCONNECTED_LIBDATACHANNEL:BOOL=OFF
 
+//vcpkg FFmpeg root
+FFMPEG_ROOT:PATH=D:/vcpkg/installed/x64-windows
+
 //Enable oss-fuzz fuzzing
 FUZZER:BOOL=OFF
 
@@ -375,6 +378,9 @@ NDI_INCLUDE_DIR:PATH=C:/Program Files/NDI/NDI 6 SDK/Include
 
 //Path to a library.
 NDI_LIBRARY:FILEPATH=C:/Program Files/NDI/NDI 6 SDK/Lib/x64/Processing.NDI.Lib.x64.lib
+
+//Path to a file.
+NDI_RUNTIME_DLL:FILEPATH=C:/Program Files/NDI/NDI 6 SDK/Bin/x64/Processing.NDI.Lib.x64.dll
 
 //Disable examples
 NO_EXAMPLES:BOOL=ON

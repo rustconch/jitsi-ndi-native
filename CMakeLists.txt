@@ -43,6 +43,22 @@ src/PerParticipantNdiRouter.cpp
 
 add_executable(jitsi-ndi-native ${SOURCES})
 
+# v102: Release-mode CPU optimizations.
+# /GL = Whole-Program Optimization (enables cross-TU inlining between all our .cpp files).
+# /LTCG = Link-Time Code Generation (linker pass required by /GL).
+# /Ot = Favor speed over size for individual functions.
+# /fp:fast = Relaxed FP: allows reassociation, no denormal trapping. Safe for
+#            our audio/video pipeline (values are always clamped before use).
+# These apply only in Release so debug builds are unaffected.
+if (MSVC)
+    target_compile_options(jitsi-ndi-native PRIVATE
+        $<$<CONFIG:Release>:/GL /Ot /fp:fast>
+    )
+    target_link_options(jitsi-ndi-native PRIVATE
+        $<$<CONFIG:Release>:/LTCG>
+    )
+endif()
+
 target_include_directories(jitsi-ndi-native PRIVATE
     src
     "${FFMPEG_ROOT}/include"

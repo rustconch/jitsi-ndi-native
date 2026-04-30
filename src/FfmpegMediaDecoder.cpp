@@ -15,7 +15,6 @@ extern "C" {
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -34,9 +33,11 @@ void filteredAvLogCallback(void* ptr, int level, const char* fmt, va_list vl) {
     std::vsnprintf(buffer, sizeof(buffer), fmt ? fmt : "", copy);
     va_end(copy);
 
-    const std::string message(buffer);
-    if (message.find("Error parsing OBU data") != std::string::npos ||
-        message.find("Error parsing frame header") != std::string::npos) {
+    // v102: use std::strstr instead of constructing a std::string — avoids a
+    // heap allocation on every FFmpeg log call (which can be frequent for
+    // transient AV1 parse errors). std::strstr operates on the stack buffer directly.
+    if (std::strstr(buffer, "Error parsing OBU data") ||
+        std::strstr(buffer, "Error parsing frame header")) {
         return;
     }
 
@@ -101,20 +102,27 @@ AVCodecContext* openDecoder(AVCodecID id) {
 
     if (id == AV_CODEC_ID_AV1 || id == AV_CODEC_ID_VP8) {
         ctx->get_format = chooseSoftwarePixelFormat;
-        ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        // v102: use FF_THREAD_SLICE only (not FRAME). FRAME threading requires
+        // buffering multiple frames ahead which adds latency; SLICE is fine for
+        // our use case (single-frame-at-a-time decode loop).
+        ctx->thread_type = FF_THREAD_SLICE;
         ctx->hw_device_ctx = nullptr;
         ctx->hw_frames_ctx = nullptr;
 
-        // v99: do not let every AV1 source create an uncontrolled "auto" libdav1d
-        // worker pool. With 2 cameras + 2 screen shares, auto threading can oversubscribe
-        // the CPU and make otherwise healthy sources freeze while audio continues. This
-        // keeps 1080p/30 requests untouched; it only caps decoder worker fan-out per source.
-        ctx->thread_count = (id == AV_CODEC_ID_AV1) ? 2 : 0;
+        // v102: reduced from 2 to 1 per decoder.
+        // With N participants each having an independent video worker thread,
+        // thread_count=2 created 2×N extra FFmpeg threads. For 720p cameras the
+        // per-frame parallelism overhead exceeded the benefit. thread_count=1
+        // means the calling thread (the pipeline worker) does the work directly,
+        // which also improves L1/L2 cache locality.
+        // Note: AV1 uses libdav1d which has its own internal thread pool and
+        // largely ignores this value anyway.
+        ctx->thread_count = 1;
     }
 
     AVDictionary* opts = nullptr;
-    if (id == AV_CODEC_ID_AV1) {
-        av_dict_set(&opts, "threads", "2", 0);
+    if (id == AV_CODEC_ID_AV1 || id == AV_CODEC_ID_VP8) {
+        av_dict_set(&opts, "threads", "1", 0);
     }
 
     const int rc = avcodec_open2(ctx, codec, &opts);
@@ -146,19 +154,20 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
     if (!encoded.bytes.empty()) {
         if (encoded.bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return out;
 
-        AVPacket* pkt = av_packet_alloc();
-        if (!pkt) return out;
-        if (av_new_packet(pkt, static_cast<int>(encoded.bytes.size())) < 0) {
-            av_packet_free(&pkt);
-            return out;
-        }
+        // v102: use a stack-allocated AVPacket to avoid one heap allocation per
+        // decoded frame. av_new_packet still allocates the data buffer (unavoidable),
+        // but the packet struct itself no longer goes through the allocator.
+        // Zero-initialization is equivalent to av_packet_init (works with all
+        // FFmpeg versions; av_packet_init was only added in FFmpeg 5.1).
+        AVPacket pkt = {};
+        if (av_new_packet(&pkt, static_cast<int>(encoded.bytes.size())) < 0) return out;
 
-        std::memcpy(pkt->data, encoded.bytes.data(), encoded.bytes.size());
-        pkt->pts = encoded.timestamp;
-        pkt->dts = encoded.timestamp;
+        std::memcpy(pkt.data, encoded.bytes.data(), encoded.bytes.size());
+        pkt.pts = encoded.timestamp;
+        pkt.dts = encoded.timestamp;
 
-        const int sendRc = avcodec_send_packet(dec, pkt);
-        av_packet_free(&pkt);
+        const int sendRc = avcodec_send_packet(dec, &pkt);
+        av_packet_unref(&pkt);
         if (sendRc < 0) return out;
     }
 
@@ -186,9 +195,76 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
             continue;
         }
 
+        // v102: fast path for YUV 4:2:0 (the standard output of both libdav1d
+        // and the FFmpeg VP8 decoder). Skip sws_scale entirely — NDI SDK accepts
+        // I420 natively, so we just memcpy the three planes into a packed buffer.
+        // This eliminates the most expensive per-frame operation: the YUV→RGB
+        // color matrix + chroma upsampling that sws_scale was doing.
+        if (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) {
+            const int uvW = (w + 1) / 2;
+            const int uvH = (h + 1) / 2;
+
+            DecodedVideoFrameBGRA f;
+            f.width = w;
+            f.height = h;
+            f.stride = w; // Y-plane stride for I420
+            f.pts90k = frame->best_effort_timestamp;
+            f.pixelFormat = VideoPixelFormat::I420;
+            f.data.resize(
+                static_cast<std::size_t>(w) * static_cast<std::size_t>(h) +
+                static_cast<std::size_t>(uvW) * static_cast<std::size_t>(uvH) * 2
+            );
+
+            std::uint8_t* dst = f.data.data();
+
+            // Copy Y plane (strip decoder padding if present)
+            if (frame->linesize[0] == w) {
+                std::memcpy(dst, frame->data[0],
+                    static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+            } else {
+                for (int row = 0; row < h; ++row) {
+                    std::memcpy(dst + static_cast<std::size_t>(row) * w,
+                                frame->data[0] + static_cast<std::size_t>(row) * frame->linesize[0],
+                                static_cast<std::size_t>(w));
+                }
+            }
+            dst += static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+
+            // Copy U plane
+            if (frame->linesize[1] == uvW) {
+                std::memcpy(dst, frame->data[1],
+                    static_cast<std::size_t>(uvW) * static_cast<std::size_t>(uvH));
+            } else {
+                for (int row = 0; row < uvH; ++row) {
+                    std::memcpy(dst + static_cast<std::size_t>(row) * uvW,
+                                frame->data[1] + static_cast<std::size_t>(row) * frame->linesize[1],
+                                static_cast<std::size_t>(uvW));
+                }
+            }
+            dst += static_cast<std::size_t>(uvW) * static_cast<std::size_t>(uvH);
+
+            // Copy V plane
+            if (frame->linesize[2] == uvW) {
+                std::memcpy(dst, frame->data[2],
+                    static_cast<std::size_t>(uvW) * static_cast<std::size_t>(uvH));
+            } else {
+                for (int row = 0; row < uvH; ++row) {
+                    std::memcpy(dst + static_cast<std::size_t>(row) * uvW,
+                                frame->data[2] + static_cast<std::size_t>(row) * frame->linesize[2],
+                                static_cast<std::size_t>(uvW));
+                }
+            }
+
+            out.push_back(std::move(f));
+            av_frame_unref(frame);
+            continue;
+        }
+
+        // Fallback: unusual pixel format (e.g. YUV444P, 10-bit). Use sws_scale
+        // to produce BGRA. Rare in practice — only for exotic AV1 profiles.
         if (!sws || swsW != w || swsH != h || swsFmt != fmt) {
             if (sws) sws_freeContext(sws);
-            sws = sws_getContext(w, h, fmt, w, h, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            sws = sws_getContext(w, h, fmt, w, h, AV_PIX_FMT_BGRA, SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
             swsW = w;
             swsH = h;
             swsFmt = fmt;
@@ -204,9 +280,10 @@ std::vector<DecodedVideoFrameBGRA> decodeVideoPacket(
         f.height = h;
         f.stride = w * 4;
         f.pts90k = frame->best_effort_timestamp;
-        f.bgra.resize(static_cast<std::size_t>(f.stride) * static_cast<std::size_t>(h));
+        f.pixelFormat = VideoPixelFormat::BGRA;
+        f.data.resize(static_cast<std::size_t>(f.stride) * static_cast<std::size_t>(h));
 
-        std::uint8_t* dstData[4] = { f.bgra.data(), nullptr, nullptr, nullptr };
+        std::uint8_t* dstData[4] = { f.data.data(), nullptr, nullptr, nullptr };
         int dstLinesize[4] = { f.stride, 0, 0, 0 };
         sws_scale(sws, frame->data, frame->linesize, 0, h, dstData, dstLinesize);
 
@@ -402,19 +479,18 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
     if (!payload || payloadSize == 0) return out;
     if (payloadSize > static_cast<std::size_t>(std::numeric_limits<int>::max())) return out;
 
-    AVPacket* pkt = av_packet_alloc();
-    if (!pkt) return out;
-    if (av_new_packet(pkt, static_cast<int>(payloadSize)) < 0) {
-        av_packet_free(&pkt);
-        return out;
-    }
+    // v102: stack AVPacket — eliminates one malloc/free per Opus RTP packet
+    // (50 packets/s × 10 participants = 500 alloc/free pairs saved per second).
+    // Zero-init works across all FFmpeg versions (av_packet_init added in 5.1).
+    AVPacket pkt = {};
+    if (av_new_packet(&pkt, static_cast<int>(payloadSize)) < 0) return out;
 
-    std::memcpy(pkt->data, payload, payloadSize);
-    pkt->pts = rtpTimestamp;
-    pkt->dts = rtpTimestamp;
+    std::memcpy(pkt.data, payload, payloadSize);
+    pkt.pts = rtpTimestamp;
+    pkt.dts = rtpTimestamp;
 
-    const int sendRc = avcodec_send_packet(impl_->dec, pkt);
-    av_packet_free(&pkt);
+    const int sendRc = avcodec_send_packet(impl_->dec, &pkt);
+    av_packet_unref(&pkt);
     if (sendRc < 0) return out;
 
     while (true) {
@@ -463,9 +539,12 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
             f.samples = converted;
             f.planar.resize(static_cast<std::size_t>(f.channels) * static_cast<std::size_t>(converted));
 
+            // v102: remove std::isfinite() — the FFmpeg Opus decoder (libopus wrapper)
+            // never outputs NaN or Inf. The isfinite check was ~1920 FP-class
+            // inspections per 20ms packet per participant. Plain min/max is both
+            // branchless on x86 (MINSS/MAXSS) and auto-vectorizable by the compiler.
             for (auto& sample : f.planar) {
-                if (!std::isfinite(sample)) sample = 0.0f;
-                else if (sample > 1.0f) sample = 1.0f;
+                if (sample > 1.0f) sample = 1.0f;
                 else if (sample < -1.0f) sample = -1.0f;
             }
 

@@ -82,13 +82,14 @@ bool NDISender::sendFrame(const VideoFrameBGRA& frame, int fpsNum, int fpsDen) {
     decoded.width = frame.width;
     decoded.height = frame.height;
     decoded.stride = frame.stride;
-    decoded.bgra = frame.pixels;
+    decoded.pixelFormat = VideoPixelFormat::BGRA;
+    decoded.data = frame.pixels;
     return sendVideoFrame(std::move(decoded), fpsNum, fpsDen);
 }
 
 bool NDISender::sendVideoFrame(DecodedVideoFrameBGRA frame, int fpsNum, int fpsDen) {
     if (!started_) return false;
-    if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) return false;
+    if (frame.width <= 0 || frame.height <= 0 || frame.data.empty()) return false;
 
 #if JNN_HAS_NDI
     QueuedVideoFrame queued{};
@@ -162,47 +163,122 @@ bool NDISender::sendAudioFrame(DecodedAudioFrameFloat32Planar frame) {
 
 #if JNN_HAS_NDI
 DecodedVideoFrameBGRA NDISender::capVideoFrameForNdi(DecodedVideoFrameBGRA frame) const {
-    static constexpr int kMaxNdiWidth = 1920;
+    static constexpr int kMaxNdiWidth  = 1920;
     static constexpr int kMaxNdiHeight = 1080;
 
-    if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) {
+    if (frame.width <= 0 || frame.height <= 0 || frame.data.empty()) {
         return frame;
     }
 
-    const int srcStride = frame.stride > 0 ? frame.stride : frame.width * 4;
-    if (frame.width <= kMaxNdiWidth && frame.height <= kMaxNdiHeight && srcStride == frame.width * 4) {
-        // v100: forward the moved-in BGRA buffer with no extra copy.
+    // Fast path: frame already fits within 1920×1080 and stride is packed.
+    // For I420: stride == width. For BGRA: stride == width*4.
+    const bool fitsInCap = frame.width <= kMaxNdiWidth && frame.height <= kMaxNdiHeight;
+    const bool strideIsPacked = (frame.pixelFormat == VideoPixelFormat::I420)
+        ? (frame.stride == frame.width)
+        : (frame.stride == frame.width * 4);
+    if (fitsInCap && strideIsPacked) {
+        // v100/v102: forward ownership with no copy.
         return frame;
     }
 
-    const double scaleW = static_cast<double>(kMaxNdiWidth) / static_cast<double>(frame.width);
+    // Compute destination dimensions (maintain aspect ratio, cap at 1920×1080).
+    const double scaleW = static_cast<double>(kMaxNdiWidth)  / static_cast<double>(frame.width);
     const double scaleH = static_cast<double>(kMaxNdiHeight) / static_cast<double>(frame.height);
-    const double scale = std::min(1.0, std::min(scaleW, scaleH));
+    const double scale  = std::min(1.0, std::min(scaleW, scaleH));
 
-    int dstW = std::max(2, static_cast<int>(frame.width * scale + 0.5));
+    int dstW = std::max(2, static_cast<int>(frame.width  * scale + 0.5));
     int dstH = std::max(2, static_cast<int>(frame.height * scale + 0.5));
-
-    // Keep even dimensions for friendlier NDI/vMix scaling paths.
     if ((dstW % 2) != 0) --dstW;
     if ((dstH % 2) != 0) --dstH;
     dstW = std::max(2, dstW);
     dstH = std::max(2, dstH);
 
     DecodedVideoFrameBGRA out{};
-    out.width = dstW;
-    out.height = dstH;
-    out.stride = dstW * 4;
-    out.pts90k = frame.pts90k;
-    out.bgra.resize(static_cast<std::size_t>(out.stride) * static_cast<std::size_t>(out.height));
+    out.width   = dstW;
+    out.height  = dstH;
+    out.pts90k  = frame.pts90k;
+    out.pixelFormat = frame.pixelFormat;
 
-    for (int y = 0; y < dstH; ++y) {
-        const int srcY = std::min(frame.height - 1, static_cast<int>((static_cast<long long>(y) * frame.height) / dstH));
-        const std::uint8_t* srcRow = frame.bgra.data() + static_cast<std::size_t>(srcY) * static_cast<std::size_t>(srcStride);
-        std::uint8_t* dstRow = out.bgra.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(out.stride);
+    if (frame.pixelFormat == VideoPixelFormat::I420) {
+        // --- I420 downscale (nearest-neighbour, 3 planes) ---
+        // Precompute x lookup tables for Y and UV planes separately.
+        const int uvSrcW = (frame.width  + 1) / 2;
+        const int uvSrcH = (frame.height + 1) / 2;
+        const int uvDstW = dstW / 2;
+        const int uvDstH = dstH / 2;
 
+        out.stride = dstW; // Y-plane row width
+        out.data.resize(
+            static_cast<std::size_t>(dstW) * static_cast<std::size_t>(dstH) +
+            static_cast<std::size_t>(uvDstW) * static_cast<std::size_t>(uvDstH) * 2
+        );
+
+        const std::uint8_t* srcY = frame.data.data();
+        const std::uint8_t* srcU = srcY + static_cast<std::size_t>(frame.width)  * static_cast<std::size_t>(frame.height);
+        const std::uint8_t* srcV = srcU + static_cast<std::size_t>(uvSrcW) * static_cast<std::size_t>(uvSrcH);
+
+        std::uint8_t* dstY = out.data.data();
+        std::uint8_t* dstU = dstY + static_cast<std::size_t>(dstW) * static_cast<std::size_t>(dstH);
+        std::uint8_t* dstV = dstU + static_cast<std::size_t>(uvDstW) * static_cast<std::size_t>(uvDstH);
+
+        // Y-plane xMap
+        std::vector<int> xMapY(static_cast<std::size_t>(dstW));
         for (int x = 0; x < dstW; ++x) {
-            const int srcX = std::min(frame.width - 1, static_cast<int>((static_cast<long long>(x) * frame.width) / dstW));
-            std::memcpy(dstRow + static_cast<std::size_t>(x) * 4, srcRow + static_cast<std::size_t>(srcX) * 4, 4);
+            xMapY[x] = std::min(frame.width - 1,
+                static_cast<int>((static_cast<long long>(x) * frame.width) / dstW));
+        }
+        for (int y = 0; y < dstH; ++y) {
+            const int srcRow = std::min(frame.height - 1,
+                static_cast<int>((static_cast<long long>(y) * frame.height) / dstH));
+            const std::uint8_t* sRow = srcY + static_cast<std::size_t>(srcRow) * static_cast<std::size_t>(frame.width);
+            std::uint8_t*       dRow = dstY + static_cast<std::size_t>(y)      * static_cast<std::size_t>(dstW);
+            for (int x = 0; x < dstW; ++x) {
+                dRow[x] = sRow[xMapY[x]];
+            }
+        }
+
+        // UV-plane xMap
+        std::vector<int> xMapUV(static_cast<std::size_t>(uvDstW));
+        for (int x = 0; x < uvDstW; ++x) {
+            xMapUV[x] = std::min(uvSrcW - 1,
+                static_cast<int>((static_cast<long long>(x) * uvSrcW) / uvDstW));
+        }
+        for (int y = 0; y < uvDstH; ++y) {
+            const int srcRow = std::min(uvSrcH - 1,
+                static_cast<int>((static_cast<long long>(y) * uvSrcH) / uvDstH));
+            const std::uint8_t* sU = srcU + static_cast<std::size_t>(srcRow) * static_cast<std::size_t>(uvSrcW);
+            const std::uint8_t* sV = srcV + static_cast<std::size_t>(srcRow) * static_cast<std::size_t>(uvSrcW);
+            std::uint8_t*       dU = dstU + static_cast<std::size_t>(y)      * static_cast<std::size_t>(uvDstW);
+            std::uint8_t*       dV = dstV + static_cast<std::size_t>(y)      * static_cast<std::size_t>(uvDstW);
+            for (int x = 0; x < uvDstW; ++x) {
+                dU[x] = sU[xMapUV[x]];
+                dV[x] = sV[xMapUV[x]];
+            }
+        }
+    } else {
+        // --- BGRA downscale (nearest-neighbour, 4 bytes/pixel) ---
+        // v102: precomputed xMap to eliminate per-pixel integer division.
+        const int srcStride = frame.stride > 0 ? frame.stride : frame.width * 4;
+        out.stride = dstW * 4;
+        out.data.resize(static_cast<std::size_t>(out.stride) * static_cast<std::size_t>(dstH));
+
+        std::vector<int> xByteOffset(static_cast<std::size_t>(dstW));
+        for (int x = 0; x < dstW; ++x) {
+            const int srcX = std::min(frame.width - 1,
+                static_cast<int>((static_cast<long long>(x) * frame.width) / dstW));
+            xByteOffset[x] = srcX * 4;
+        }
+        for (int y = 0; y < dstH; ++y) {
+            const int srcY = std::min(frame.height - 1,
+                static_cast<int>((static_cast<long long>(y) * frame.height) / dstH));
+            const std::uint8_t* srcRow = frame.data.data() +
+                static_cast<std::size_t>(srcY) * static_cast<std::size_t>(srcStride);
+            std::uint8_t* dstRow = out.data.data() +
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(out.stride);
+            for (int x = 0; x < dstW; ++x) {
+                std::memcpy(dstRow + static_cast<std::size_t>(x) * 4,
+                            srcRow + static_cast<std::size_t>(xByteOffset[x]), 4);
+            }
         }
     }
 
@@ -274,18 +350,29 @@ void NDISender::videoWorkerLoop() {
 
 void NDISender::sendVideoFrameImmediate(const DecodedVideoFrameBGRA& frame, int fpsNum, int fpsDen) {
     if (!ndiSend_) return;
-    if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) return;
+    if (frame.width <= 0 || frame.height <= 0 || frame.data.empty()) return;
 
     NDIlib_video_frame_v2_t video{};
     video.xres = frame.width;
     video.yres = frame.height;
-    video.FourCC = NDIlib_FourCC_type_BGRA;
     video.frame_rate_N = fpsNum;
     video.frame_rate_D = fpsDen <= 0 ? 1 : fpsDen;
     video.picture_aspect_ratio = static_cast<float>(frame.width) / static_cast<float>(frame.height);
     video.frame_format_type = NDIlib_frame_format_type_progressive;
-    video.p_data = const_cast<std::uint8_t*>(frame.bgra.data());
-    video.line_stride_in_bytes = frame.stride > 0 ? frame.stride : frame.width * 4;
+    video.p_data = const_cast<std::uint8_t*>(frame.data.data());
+
+    // v102: I420 is the native output of libdav1d (AV1) and FFmpeg VP8.
+    // Sending I420 directly to NDI avoids the YUV→BGRA conversion that used
+    // to happen in sws_scale. NDI SDK and downstream tools (vMix, OBS, etc.)
+    // all handle I420 natively. BGRA remains as fallback for exotic formats.
+    if (frame.pixelFormat == VideoPixelFormat::I420) {
+        video.FourCC = NDIlib_FourCC_type_I420;
+        video.line_stride_in_bytes = frame.stride > 0 ? frame.stride : frame.width;
+    } else {
+        video.FourCC = NDIlib_FourCC_type_BGRA;
+        video.line_stride_in_bytes = frame.stride > 0 ? frame.stride : frame.width * 4;
+    }
+
     NDIlib_send_send_video_v2(static_cast<NDIlib_send_instance_t>(ndiSend_), &video);
 
     if ((sentFrames_ % 300) == 0) {
