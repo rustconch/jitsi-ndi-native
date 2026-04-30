@@ -163,14 +163,11 @@ AVBufferRef* tryAttachHwDecode(const AVCodec* codec, AVCodecContext* ctx,
 
 const AVCodec* findDecoder(AVCodecID id) {
     if (id == AV_CODEC_ID_AV1) {
-        // Prefer named D3D11VA AV1 hw decoders if present in this FFmpeg build.
-        // Most vcpkg builds won't have them, so we fall back to libdav1d quickly.
-        for (const char* name : { "av1_d3d11va2", "av1_d3d11va" }) {
-            if (const AVCodec* c = avcodec_find_decoder_by_name(name)) {
-                Logger::info("FfmpegMediaDecoder: found hw AV1 decoder: ", name);
-                return c;
-            }
-        }
+        // v103: always use libdav1d for AV1. The named hw-only decoders
+        // (av1_d3d11va2 / av1_d3d11va) have no software fallback — if the GPU
+        // does not support AV1 D3D11VA, avcodec_open2 throws and kills the whole
+        // ParticipantPipeline including audio. libdav1d ignores hw_device_ctx
+        // (tryAttachHwDecode will fail for it gracefully), so AV1 stays pure-SW.
         if (const AVCodec* dav1d = avcodec_find_decoder_by_name("libdav1d")) {
             Logger::info("FfmpegMediaDecoder: using AV1 decoder libdav1d");
             return dav1d;
@@ -238,11 +235,31 @@ AVCodecContext* openDecoder(AVCodecID id,
 
     const int rc = avcodec_open2(ctx, codec, &opts);
     av_dict_free(&opts);
-    if (rc < 0) {
-        if (hwDeviceCtxOut) {
-            av_buffer_unref(&hwDeviceCtxOut);
-            hwDeviceCtxOut = nullptr;
+    if (rc < 0 && hwDeviceCtxOut) {
+        // Hardware-assisted open failed. Release the hw context and retry with
+        // pure software decoding so a pipeline is never killed over a GPU issue.
+        Logger::warn("FfmpegMediaDecoder: avcodec_open2 failed with hw attached (",
+                     av_strerror(rc, nullptr, 0), "), retrying software-only");
+        av_buffer_unref(&ctx->hw_device_ctx);
+        ctx->hw_device_ctx = nullptr;
+        ctx->hw_frames_ctx = nullptr;
+        ctx->get_format    = chooseSoftwarePixelFormat;
+        ctx->opaque        = nullptr;
+        av_buffer_unref(&hwDeviceCtxOut);
+        hwDeviceCtxOut = nullptr;
+        hwPixFmtOut    = AV_PIX_FMT_NONE;
+
+        AVDictionary* swOpts = nullptr;
+        if (id == AV_CODEC_ID_AV1 || id == AV_CODEC_ID_VP8) {
+            av_dict_set(&swOpts, "threads", "1", 0);
         }
+        const int swRc = avcodec_open2(ctx, codec, &swOpts);
+        av_dict_free(&swOpts);
+        if (swRc < 0) {
+            avcodec_free_context(&ctx);
+            throwIfNeg(swRc, "avcodec_open2 (sw fallback)");
+        }
+    } else if (rc < 0) {
         avcodec_free_context(&ctx);
         throwIfNeg(rc, "avcodec_open2");
     }
