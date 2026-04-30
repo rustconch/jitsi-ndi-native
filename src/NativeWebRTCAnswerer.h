@@ -26,6 +26,9 @@ public:
     using LocalCandidateCallback = std::function<void(const LocalIceCandidate&)>;
     using MediaPacketCallback = std::function<void(const std::string& mid, const std::uint8_t* data, std::size_t size)>;
     using SessionFailureCallback = std::function<void(const std::string& reason)>;
+    // Fired when the JVB data channel delivers an EndpointMessage from a peer
+    // (e.g. move_to_room_request from the moderator). Receives the raw JSON text.
+    using EndpointMessageCallback = std::function<void(const std::string& messageJson)>;
 
     NativeWebRTCAnswerer();
     ~NativeWebRTCAnswerer();
@@ -37,6 +40,7 @@ public:
     void setLocalCandidateCallback(LocalCandidateCallback cb);
     void setMediaPacketCallback(MediaPacketCallback cb);
     void setSessionFailureCallback(SessionFailureCallback cb);
+    void setEndpointMessageCallback(EndpointMessageCallback cb);
 
     bool createAnswer(const JingleSession& session, Answer& outAnswer);
     void updateReceiverSourcesFromJingleXml(const std::string& xml);
@@ -62,6 +66,7 @@ private:
     LocalCandidateCallback onLocalCandidate_;
     MediaPacketCallback onMediaPacket_;
     SessionFailureCallback onSessionFailure_;
+    EndpointMessageCallback onEndpointMessage_;
 
     std::atomic<std::uint64_t> audioPackets_{0};
     std::atomic<std::uint64_t> videoPackets_{0};

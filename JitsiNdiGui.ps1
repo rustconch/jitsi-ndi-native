@@ -282,10 +282,8 @@ function Start-Click {
         $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
         $script:currentLogFile = Join-Path $script:logDir "jitsi-ndi-gui_$stamp.log"
         $nativeLogFile = Join-Path $script:logDir "jitsi-ndi-native_$stamp.log"
-        $nativeErrFile = Join-Path $script:logDir "jitsi-ndi-native_err_$stamp.log"
         Set-Content -LiteralPath $script:currentLogFile -Value '# Jitsi NDI GUI session log' -Encoding UTF8
         Set-Content -LiteralPath $nativeLogFile -Value '# Jitsi NDI Native execution log' -Encoding UTF8
-        Set-Content -LiteralPath $nativeErrFile -Value '# Jitsi NDI Native error log' -Encoding UTF8
 
         $argsList = @('--room', $room)
         $nick = ("$($script:txtNick.Text)").Trim()
@@ -296,13 +294,25 @@ function Start-Click {
         $arguments = Join-ProcessArgs $argsList
         $script:lastCommand = (Quote-Arg $exe) + ' ' + $arguments
 
-        $p = Start-Process -FilePath $exe -ArgumentList $argsList -WorkingDirectory (Split-Path -Parent $exe) -WindowStyle Hidden -RedirectStandardOutput $nativeLogFile -RedirectStandardError $nativeErrFile -PassThru
-        if (-not $p) { throw 'Start-Process failed.' }
+        # Use cmd.exe to launch the native app and pipe all output to the single log file 2>&1
+        $cmdArgs = '/c "{0} > ""{1}"" 2>&1"' -f $script:lastCommand, $nativeLogFile
+        
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'cmd.exe'
+        $psi.Arguments = $cmdArgs
+        $psi.WorkingDirectory = Split-Path -Parent $exe
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        if (-not $p.Start()) { throw 'Process.Start failed.' }
+        
         $script:proc = $p
         $script:nativeStartedAt = Get-Date
         $script:isStopping = $false
         Set-RunningUi $true
-        Append-Log "[GUI] Started native process. Output written to $nativeLogFile. PID=$($p.Id)"
+        Append-Log "[GUI] Started native process via cmd. Output written to $nativeLogFile. PID=$($p.Id)"
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
@@ -461,7 +471,7 @@ function Get-CachedBackground {
         $jitsiSize = $g.MeasureString("Jitsi ", $fontTitle)
         $g.DrawString("NDI", $fontTitle, $bOrange, 40 + $jitsiSize.Width - 15, 25)
 
-        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
         $g.DrawString("ВСТАВЬТЕ ССЫЛКУ НА КОНФЕРЕНЦИЮ JITSI", $fontLabel, $bWhite, 110, 95)
         $g.DrawString("ССЫЛКА ДЛЯ СПИКЕРА", $fontLabel, $bWhite, 110, 205)
         $g.DrawString("ВЫБЕРИТЕ НИК", $fontLabel, $bWhite, 110, 315)

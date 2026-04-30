@@ -1523,6 +1523,11 @@ void NativeWebRTCAnswerer::setSessionFailureCallback(SessionFailureCallback cb) 
     onSessionFailure_ = std::move(cb);
 }
 
+void NativeWebRTCAnswerer::setEndpointMessageCallback(EndpointMessageCallback cb) {
+    std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+    onEndpointMessage_ = std::move(cb);
+}
+
 void NativeWebRTCAnswerer::notifySessionFailureOnce(std::uint64_t generation, const std::string& reason) {
 #if JNN_WITH_NATIVE_WEBRTC
     if (!impl_) {
@@ -2004,8 +2009,7 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                 // (Hello, ForwardedSources, DominantSpeaker, etc.) are still logged.
                 const bool isPeriodicStats =
                     text.find("\"colibriClass\":\"ConnectionStats\"") != std::string::npos
-                    || text.find("\"colibriClass\":\"EndpointStats\"") != std::string::npos
-                    || text.find("\"colibriClass\":\"EndpointMessage\"") != std::string::npos;
+                    || text.find("\"colibriClass\":\"EndpointStats\"") != std::string::npos;
                 if (!isPeriodicStats) {
                     Logger::info(
                         "NativeWebRTCAnswerer: bridge datachannel text: ",
@@ -2132,6 +2136,21 @@ bool NativeWebRTCAnswerer::createAnswer(const JingleSession& session, Answer& ou
                     activeKnownVideoSources,
                     "forwarded-known-sources"
                 );
+            }
+
+            // Breakout rooms: JVB routes peer-to-peer messages (e.g.
+            // move_to_room_request from the moderator) as EndpointMessage
+            // on the data channel. Fire the registered callback so the
+            // signaling layer can act on them (e.g. switch MUC rooms).
+            if (text.find("\"colibriClass\":\"EndpointMessage\"") != std::string::npos) {
+                EndpointMessageCallback cb;
+                {
+                    std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+                    cb = onEndpointMessage_;
+                }
+                if (cb) {
+                    cb(text);
+                }
             }
         });
 

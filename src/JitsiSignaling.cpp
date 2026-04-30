@@ -186,6 +186,28 @@ JitsiSignaling::JitsiSignaling(JitsiSignalingConfig config)
     ndiRouter_->setKeyframeRequestCallback([this]() {
         answerer_.requestVideoKeyframe();
     });
+
+    // Breakout rooms: Jitsi moderator sends move_to_room_request via JVB
+    // EndpointMessage (data channel), NOT via XMPP. Handle it here so the
+    // participant switches MUC rooms without losing the WebSocket connection.
+    answerer_.setEndpointMessageCallback([this](const std::string& msgJson) {
+        if (msgJson.find("move_to_room_request") == std::string::npos) {
+            return;
+        }
+
+        Logger::info("JitsiSignaling: move_to_room_request EndpointMessage received: ", msgJson);
+
+        // The full message looks like:
+        // {"colibriClass":"EndpointMessage","from":"...","msgPayload":{"type":"move_to_room_request","roomId":"breakout-xxx@conference.meet.jit.si"}}
+        // Extract roomId — works for both nested-object and escaped-string payloads.
+        const std::regex roomIdRe(R"("roomId"\s*:\s*"([^"\\]+))");
+        std::smatch m;
+        if (std::regex_search(msgJson, m, roomIdRe) && m.size() > 1) {
+            handleBreakoutRoomMove(m[1].str());
+        } else {
+            Logger::warn("JitsiSignaling: move_to_room_request received but roomId parse failed: ", msgJson);
+        }
+    });
 }
 
 JitsiSignaling::~JitsiSignaling() {
@@ -489,6 +511,9 @@ void JitsiSignaling::sendDiscoInfoResult(const std::string& to, const std::strin
     xml << "<feature var='http://jitsi.org/protocol/remb'/>";
     xml << "<feature var='http://jitsi.org/protocol/tcc'/>";
     xml << "<feature var='http://jitsi.org/protocol/receive-multiple-streams'/>";
+    // Breakout rooms: without this feature flag Jitsi moderator client considers
+    // the participant incapable of switching rooms and disables the move action.
+    xml << "<feature var='http://jitsi.org/protocol/breakout-rooms'/>";
 
     xml << "</query>";
     xml << "</iq>";
@@ -832,12 +857,14 @@ void JitsiSignaling::handleBreakoutRoomMove(const std::string& targetRoomJid) {
 
     Logger::info("Breakout room: move_to_room_request received, target=", targetRoomJid);
 
-    // The roomId is a full MUC JID (e.g. "breakout-abc123@conference.meet.jit.si").
-    // Extract just the room name that goes into cfg_.room.
+    // The roomId is a full MUC JID (e.g. "breakout-abc123@breakout.meet.jit.si").
+    // Extract the room name and the MUC domain to update cfg_.
     std::string newRoom = targetRoomJid;
+    std::string newMucDomain = cfg_.mucDomain;
     const auto atPos = targetRoomJid.find('@');
     if (atPos != std::string::npos) {
         newRoom = targetRoomJid.substr(0, atPos);
+        newMucDomain = targetRoomJid.substr(atPos + 1);
     }
 
     if (newRoom.empty()) {
@@ -845,12 +872,12 @@ void JitsiSignaling::handleBreakoutRoomMove(const std::string& targetRoomJid) {
         return;
     }
 
-    if (newRoom == cfg_.room) {
-        Logger::info("Breakout room: already in target room=", newRoom, ", ignoring");
+    if (newRoom == cfg_.room && newMucDomain == cfg_.mucDomain) {
+        Logger::info("Breakout room: already in target room=", newRoom, "@", newMucDomain, ", ignoring");
         return;
     }
 
-    Logger::info("Breakout room: leaving room=", cfg_.room, " joining room=", newRoom);
+    Logger::info("Breakout room: leaving room=", cfg_.room, "@", cfg_.mucDomain, " joining room=", newRoom, "@", newMucDomain);
 
     // 1. Leave the current MUC gracefully so Jitsi removes us from the roster.
     sendLeaveMuc();
@@ -881,11 +908,12 @@ void JitsiSignaling::handleBreakoutRoomMove(const std::string& targetRoomJid) {
     // Clear any pending media-recovery flag from the old session.
     mediaRecoveryRequested_.store(false);
 
-    // 5. Point cfg_.room at the new room — mucJid(), bareMucJid(), focusJid()
+    // 5. Point cfg_.room and cfg_.mucDomain at the new room — mucJid(), bareMucJid()
     //    all derive from this, so the subsequent join will use the correct JIDs.
     cfg_.room = newRoom;
+    cfg_.mucDomain = newMucDomain;
 
-    Logger::info("Breakout room: switched cfg_.room=", newRoom, ", sending conference request");
+    Logger::info("Breakout room: switched cfg_.room=", newRoom, "@", newMucDomain, ", sending conference request");
 
     // 6. Trigger the standard join sequence: conference IQ → joinMuc() on result.
     sendConferenceRequest();
@@ -1015,16 +1043,17 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
     // {"type":"move_to_room_request","roomId":"breakout-xxx@conference.meet.jit.si"}.
     // Intercept it here before the stanza is forwarded to the ndiRouter source-map
     // update, which would misinterpret it as a participant source advertisement.
-    if (contains(xml, "<message") && contains(xml, "move_to_room_request")) {
-        // The JSON may be entity-encoded inside XML (&quot; etc.) — decode first.
-        const std::string decoded = jsonUnescape(xml);
-        const std::regex roomIdRe(R"("roomId"\s*:\s*"([^"]+)")");
+    if (contains(xml, "<message") && contains(xml, "move-to-room")) {
+        // The JSON is entity-encoded inside the XMPP XML (&quot; etc.) — decode first.
+        const std::string decoded = xmlUnescape(xml);
+        // Jitsi can send either "roomId" or "roomJid" depending on the client version.
+        const std::regex roomIdRe(R"regex("room(?:Id|Jid)"\s*:\s*"([^"]+)")regex");
         std::smatch breakoutMatch;
         if (std::regex_search(decoded, breakoutMatch, roomIdRe) && breakoutMatch.size() > 1) {
             handleBreakoutRoomMove(breakoutMatch[1].str());
             return;
         }
-        Logger::warn("Breakout room: move_to_room_request detected but roomId parse failed, xml=", xml);
+        Logger::warn("Breakout room: move_to_room detected but roomJid parse failed, xml=", xml);
     }
 
     if (ndiRouter_) {
