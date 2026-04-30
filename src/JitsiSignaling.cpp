@@ -814,6 +814,83 @@ void JitsiSignaling::handleJingleTerminate(const std::string& xml) {
     sendIqResult(from, id);
 }
 
+void JitsiSignaling::sendLeaveMuc() {
+    std::ostringstream xml;
+    xml
+        << "<presence xmlns='jabber:client'"
+        << " to='" << xmlEscape(mucJid()) << "'"
+        << " type='unavailable'/>";
+    sendRaw(xml.str());
+    Logger::info("Breakout room: sent unavailable presence, leaving MUC ", mucJid());
+}
+
+void JitsiSignaling::handleBreakoutRoomMove(const std::string& targetRoomJid) {
+    if (targetRoomJid.empty()) {
+        Logger::warn("Breakout room: move_to_room_request with empty roomId, ignoring");
+        return;
+    }
+
+    Logger::info("Breakout room: move_to_room_request received, target=", targetRoomJid);
+
+    // The roomId is a full MUC JID (e.g. "breakout-abc123@conference.meet.jit.si").
+    // Extract just the room name that goes into cfg_.room.
+    std::string newRoom = targetRoomJid;
+    const auto atPos = targetRoomJid.find('@');
+    if (atPos != std::string::npos) {
+        newRoom = targetRoomJid.substr(0, atPos);
+    }
+
+    if (newRoom.empty()) {
+        Logger::warn("Breakout room: could not parse room name from JID=", targetRoomJid);
+        return;
+    }
+
+    if (newRoom == cfg_.room) {
+        Logger::info("Breakout room: already in target room=", newRoom, ", ignoring");
+        return;
+    }
+
+    Logger::info("Breakout room: leaving room=", cfg_.room, " joining room=", newRoom);
+
+    // 1. Leave the current MUC gracefully so Jitsi removes us from the roster.
+    sendLeaveMuc();
+
+    // 2. Tear down the existing WebRTC session — this stops all RTP delivery.
+    answerer_.resetSession();
+
+    // 3. Drop all old per-participant NDI pipelines and start fresh.
+    ndiRouter_ = std::make_unique<PerParticipantNdiRouter>(cfg_.ndiBaseName);
+    ndiRouter_->setKeyframeRequestCallback([this]() {
+        answerer_.requestVideoKeyframe();
+    });
+
+    // 4. Clear all Jingle / ICE session state so the next session-initiate is
+    //    treated as a brand new session rather than a duplicate.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        currentSid_.clear();
+        currentFocusJid_.clear();
+        currentIceUfrag_.clear();
+        currentIcePwd_.clear();
+        lastMediaFailureReason_.clear();
+        currentContentNames_.clear();
+        sessionAcceptSent_ = false;
+        pendingLocalCandidates_.clear();
+    }
+
+    // Clear any pending media-recovery flag from the old session.
+    mediaRecoveryRequested_.store(false);
+
+    // 5. Point cfg_.room at the new room — mucJid(), bareMucJid(), focusJid()
+    //    all derive from this, so the subsequent join will use the correct JIDs.
+    cfg_.room = newRoom;
+
+    Logger::info("Breakout room: switched cfg_.room=", newRoom, ", sending conference request");
+
+    // 6. Trigger the standard join sequence: conference IQ → joinMuc() on result.
+    sendConferenceRequest();
+}
+
 void JitsiSignaling::flushPendingCandidates() {
     std::vector<LocalIceCandidate> candidates;
     std::vector<std::string> contentNames;
@@ -933,6 +1010,22 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
     }
 
     handleRoomMetadata(xml);
+
+    // Breakout rooms: Jitsi sends a <message> stanza containing JSON
+    // {"type":"move_to_room_request","roomId":"breakout-xxx@conference.meet.jit.si"}.
+    // Intercept it here before the stanza is forwarded to the ndiRouter source-map
+    // update, which would misinterpret it as a participant source advertisement.
+    if (contains(xml, "<message") && contains(xml, "move_to_room_request")) {
+        // The JSON may be entity-encoded inside XML (&quot; etc.) — decode first.
+        const std::string decoded = jsonUnescape(xml);
+        const std::regex roomIdRe(R"("roomId"\s*:\s*"([^"]+)")");
+        std::smatch breakoutMatch;
+        if (std::regex_search(decoded, breakoutMatch, roomIdRe) && breakoutMatch.size() > 1) {
+            handleBreakoutRoomMove(breakoutMatch[1].str());
+            return;
+        }
+        Logger::warn("Breakout room: move_to_room_request detected but roomId parse failed, xml=", xml);
+    }
 
     if (ndiRouter_) {
         const bool isPresence = contains(xml, "<presence");

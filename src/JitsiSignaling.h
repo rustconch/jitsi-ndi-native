@@ -73,6 +73,10 @@ private:
     void handleJingleTransportInfo(const std::string& xml);
     void handleJingleTerminate(const std::string& xml);
 
+    // Breakout rooms: leave the current MUC and rejoin a different one.
+    void sendLeaveMuc();
+    void handleBreakoutRoomMove(const std::string& targetRoomJid);
+
     void flushPendingCandidates();
 
     std::string activeDomain() const;
