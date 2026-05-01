@@ -1176,6 +1176,10 @@ void JitsiSignaling::handleXmppMessage(const std::string& xml) {
         && !contains(xml, "status code='110'")
         && !contains(xml, "status code=\"110\"")
     ) {
-        Logger::info("Presence received. This is the first sign that MUC join is alive.");
+        if (contains(xml, "code='407'") || contains(xml, "registration-required") || contains(xml, "waiting-for-host")) {
+            Logger::warn("XMPP: LOBBY DETECTED. You are waiting for the moderator to let you in.");
+        } else {
+            Logger::info("Presence received. This is the first sign that MUC join is alive.");
+        }
     }
 }

@@ -251,11 +251,14 @@ function Stop-NativeProcess {
     try {
         $script:isStopping = $true
         if ($script:proc -and -not $script:proc.HasExited) {
-            Append-Log "[GUI] Stopping native process... $Reason"
-            try { $script:proc.Kill() } catch {}
-            try { $script:proc.WaitForExit(3000) | Out-Null } catch {}
+            Append-Log "[GUI] Stopping native process tree... $Reason"
+            # Since we launch via cmd.exe, we must kill the entire tree to stop the native app.
+            $pidToKill = $script:proc.Id
+            Start-Process taskkill.exe -ArgumentList "/F", "/T", "/PID", $pidToKill -WindowStyle Hidden -Wait
         }
-    } catch {}
+    } catch {
+        Append-Log "[GUI] Stop failed: $($_.Exception.Message)"
+    }
     Set-RunningUi $false
 }
 
@@ -614,3 +617,5 @@ $form.Add_FormClosing({
 
 Set-RunningUi $false
 [void]$form.ShowDialog()
+try { $timer.Stop() } catch {}
+exit
