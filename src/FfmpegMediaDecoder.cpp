@@ -799,6 +799,18 @@ std::vector<DecodedAudioFrameFloat32Planar> FfmpegOpusDecoder::decodeRtpPayload(
 
         if (converted > 0) {
             f.samples = converted;
+            
+            // If the resampler produced fewer samples than the allocated capacity,
+            // the second channel is offset by outCapacity, not 'converted'. We must
+            // shift it down before resizing the vector, otherwise we truncate it.
+            if (converted < outCapacity && f.channels == 2) {
+                std::memmove(
+                    f.planar.data() + converted,
+                    f.planar.data() + outCapacity,
+                    static_cast<std::size_t>(converted) * sizeof(float)
+                );
+            }
+
             f.planar.resize(static_cast<std::size_t>(f.channels) * converted);
 
             // v102: plain min/max — branchless MINSS/MAXSS on x86, auto-vectorised.
