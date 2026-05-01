@@ -1,21 +1,6 @@
 ﻿# Jitsi NDI Native GUI v68 - Full Dark UI Rebuild (Reference: htathtyc.png)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-
-# v68 Taskbar Icon Fix: Set unique AppID so Windows doesn't group this with generic PowerShell.
-try {
-    $code = @"
-    using System;
-    using System.Runtime.InteropServices;
-    public class Win32 {
-        [DllImport("shell32.dll", SetLastError = true)]
-        public static extern void SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
-    }
-"@
-    Add-Type -TypeDefinition $code
-    [Win32]::SetCurrentProcessExplicitAppUserModelID("Jitsi.NDI.Native.Client")
-} catch {}
-
 [System.Windows.Forms.Application]::EnableVisualStyles()
 [System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
 
@@ -319,6 +304,13 @@ function Start-Click {
         $psi.FileName = 'cmd.exe'
         $psi.Arguments = $cmdArgs
         $psi.WorkingDirectory = Split-Path -Parent $exe
+        # PORTABLE_DLL_PATH_PATCH_V68: make local runtime DLLs visible to native exe.
+        try {
+            $nativeDirForPath = Split-Path -Parent $exe
+            $oldPathForProcess = $psi.EnvironmentVariables['PATH']
+            if ([string]::IsNullOrWhiteSpace($oldPathForProcess)) { $oldPathForProcess = $env:PATH }
+            $psi.EnvironmentVariables['PATH'] = $nativeDirForPath + ';' + $script:repoRoot + ';' + $oldPathForProcess
+        } catch {}
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 

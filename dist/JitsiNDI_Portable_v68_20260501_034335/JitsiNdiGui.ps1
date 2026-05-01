@@ -319,6 +319,13 @@ function Start-Click {
         $psi.FileName = 'cmd.exe'
         $psi.Arguments = $cmdArgs
         $psi.WorkingDirectory = Split-Path -Parent $exe
+        # PORTABLE_DLL_PATH_PATCH_V68: make local runtime DLLs visible to native exe.
+        try {
+            $nativeDirForPath = Split-Path -Parent $exe
+            $oldPathForProcess = $psi.EnvironmentVariables['PATH']
+            if ([string]::IsNullOrWhiteSpace($oldPathForProcess)) { $oldPathForProcess = $env:PATH }
+            $psi.EnvironmentVariables['PATH'] = $nativeDirForPath + ';' + $script:repoRoot + ';' + $oldPathForProcess
+        } catch {}
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
 
