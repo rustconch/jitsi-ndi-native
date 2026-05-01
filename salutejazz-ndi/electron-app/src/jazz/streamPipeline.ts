@@ -7,10 +7,15 @@ import {
   handleEvent,
   handleQuery,
   type JazzRoom,
-  type JazzRoomMediaType,
+  type MediaType as JazzMediaType,
   type JazzRoomParticipant,
   type JazzRoomParticipantId,
 } from '@salutejs/jazz-sdk-web';
+
+// participantUpdate carries a partial participant (id required, rest optional).
+type PartialParticipant = { id: JazzRoomParticipantId } & Partial<
+  Omit<JazzRoomParticipant, 'id'>
+>;
 
 export type MediaKind = 'audio' | 'video' | 'displayScreen';
 
@@ -25,7 +30,7 @@ export interface StreamRecord {
 export interface StreamPipelineEvents {
   onAttach(record: StreamRecord): void;
   onDetach(participantId: JazzRoomParticipantId, mediaType: MediaKind): void;
-  onParticipantUpdate?(participant: JazzRoomParticipant): void;
+  onParticipantUpdate?(participant: PartialParticipant): void;
 }
 
 const KINDS: ReadonlyArray<MediaKind> = ['audio', 'video', 'displayScreen'];
@@ -73,11 +78,14 @@ export class StreamPipeline {
       handleEvent(this.room.event$, 'participantUpdate', ({ payload }) => {
         this.events.onParticipantUpdate?.(payload.participant);
         // If display name changes we refresh attached records' label.
-        for (const kind of KINDS) {
-          const key = recordKey(payload.participant.id, kind);
-          const rec = this.active.get(key);
-          if (rec) {
-            rec.participantName = payload.participant.name;
+        const newName = payload.participant.name;
+        if (newName !== undefined) {
+          for (const kind of KINDS) {
+            const key = recordKey(payload.participant.id, kind);
+            const rec = this.active.get(key);
+            if (rec) {
+              rec.participantName = newName;
+            }
           }
         }
       }),
@@ -135,7 +143,7 @@ export class StreamPipeline {
 
     const sourceState = this.room.getParticipantMediaSource(
       p.id,
-      mediaType as JazzRoomMediaType,
+      mediaType as JazzMediaType,
     );
 
     const initialStream = sourceState.stream();
@@ -211,7 +219,7 @@ export class StreamPipeline {
   ): void {
     const sourceState = this.room.getParticipantMediaSource(
       participantId,
-      mediaType as JazzRoomMediaType,
+      mediaType as JazzMediaType,
     );
     const stream = sourceState.stream();
     const key = recordKey(participantId, mediaType);

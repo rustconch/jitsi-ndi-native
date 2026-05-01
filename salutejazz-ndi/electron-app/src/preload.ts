@@ -4,14 +4,6 @@
 
 import { ipcRenderer } from 'electron';
 
-declare global {
-  interface Window {
-    mainBridge: {
-      log: (level: string, ...args: unknown[]) => void;
-    };
-  }
-}
-
 window.mainBridge = {
   log: (level: string, ...args: unknown[]) => ipcRenderer.send('log', level, ...args),
 };

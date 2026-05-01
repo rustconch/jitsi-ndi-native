@@ -14,8 +14,7 @@
         "<(ndi_sdk_dir)/Include"
       ],
       "defines": [
-        "NAPI_DISABLE_CPP_EXCEPTIONS",
-        "NODE_ADDON_API_ENABLE_MAYBE"
+        "NAPI_DISABLE_CPP_EXCEPTIONS"
       ],
       "cflags_cc": [ "-std=c++17", "-fexceptions" ],
       "cflags_cc!": [ "-fno-exceptions" ],
@@ -47,10 +46,7 @@
           }
         }],
         ["OS=='linux'", {
-          "libraries": [
-            "-L<(ndi_sdk_dir)/lib/x86_64-linux-gnu",
-            "-lndi"
-          ]
+          "libraries": [ "-ldl" ]
         }]
       ]
     }

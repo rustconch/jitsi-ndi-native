@@ -25,21 +25,46 @@
 
 ## Сборка
 
+Аддон **не линкуется статически с NDI** — на всех платформах библиотека
+загружается через `dlopen`/`LoadLibrary` при первом `createSender`. Это значит,
+что для сборки достаточно только заголовочных файлов NDI SDK; runtime (`.so`,
+`.dll`, `.dylib`) ставится отдельно и подгружается во время выполнения.
+
 ```bash
-# По умолчанию ищет NDI SDK в ../../NDI 6 SDK (рядом с salutejazz-ndi/)
 cd salutejazz-ndi/native-ndi-bridge
-npm install            # node-gyp rebuild
+# По умолчанию заголовки ищутся в ../../NDI 6 SDK (рядом с salutejazz-ndi/).
+npm install
 ```
 
-Для нестандартного пути к NDI:
+Если путь к SDK содержит пробелы (как стандартный `NDI 6 SDK`), node-gyp может
+сломаться — в этом случае создайте симлинк без пробелов и укажите его:
+
 ```bash
-NDI_SDK_DIR="C:/Program Files/NDI/NDI 6 SDK" npm install
-# linux:   NDI_SDK_DIR=/usr/local/ndisdk npm install
-# macos:   NDI_SDK_DIR=/Library/NDI\ SDK\ for\ Apple npm install
+ln -sfn "../NDI 6 SDK" ../NDI6SDK
+NDI_SDK_DIR="$PWD/../NDI6SDK" npm install
+```
+
+Для нестандартного пути:
+```bash
+NDI_SDK_DIR=/usr/local/ndisdk npm install
 ```
 
 После сборки появится `build/Release/salutejazz_ndi_bridge.node`.
-На Windows DLL `Processing.NDI.Lib.x64.dll` копируется в тот же каталог.
+На Windows runtime DLL `Processing.NDI.Lib.x64.dll` копируется в тот же
+каталог автоматически из NDI SDK.
+
+## Runtime (важно!)
+
+Аддон скомпилируется без NDI runtime, но `createSender` вернёт ошибку, пока
+runtime не доступен в системе:
+
+| OS      | Что должно быть установлено                          | Как указать путь                       |
+|---------|------------------------------------------------------|----------------------------------------|
+| Windows | `NDI 6 Runtime` инсталлятор (`Processing.NDI.Lib.x64.dll`) | `PATH` или папка с `.node`            |
+| Linux   | `libndi.so.6` из NDI Linux SDK                       | `LD_LIBRARY_PATH` или `NDI_RUNTIME_DIR_V6` |
+| macOS   | `libndi.dylib` из NDI macOS SDK                      | `DYLD_LIBRARY_PATH` или `NDI_RUNTIME_DIR_V6` |
+
+Скачать NDI 6 SDK / Runtime можно на <https://ndi.video/>.
 
 ## Использование
 
@@ -102,8 +127,7 @@ destroySender(handle); // или просто потерять ссылку — 
   `nodeIntegration: true` или `contextIsolation: false` для конкретного окна).
   Это безопасно, потому что мы — операторский тул, а не браузер для произвольных
   сайтов.
-- На Windows runtime DLL `Processing.NDI.Lib.x64.dll` должен быть рядом с
-  `.node`-файлом или в `PATH`. `binding.gyp` копирует её автоматически после
-  сборки.
-- Linux: требуется `libndi.so` из NDI 6 SDK (положить в `/usr/local/lib`
-  или указать `LD_LIBRARY_PATH`).
+- Runtime NDI (`libndi.so.6` / `Processing.NDI.Lib.x64.dll` / `libndi.dylib`)
+  должен быть установлен в системе или указан через `NDI_RUNTIME_DIR_V6`.
+  Аддон загружает его динамически через `dlopen`/`LoadLibrary` при первом
+  `createSender`, чтобы не блокировать сборку при отсутствии runtime.

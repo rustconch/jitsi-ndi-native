@@ -13,6 +13,6 @@
     "sourceMap": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["src/renderer.ts", "src/jazz/**/*.ts"],
+  "include": ["src/renderer.ts", "src/jazz/**/*.ts", "src/global.d.ts"],
   "exclude": ["node_modules", "dist", "src/main.ts", "src/preload.ts"]
 }

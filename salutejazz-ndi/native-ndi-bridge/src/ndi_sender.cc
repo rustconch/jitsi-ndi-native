@@ -1,12 +1,66 @@
 #include "ndi_sender.h"
 
 #include <cstring>
+#include <cstdlib>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace salutejazz_ndi {
+
+// --- NdiLibraryGuard statics ---
 
 std::atomic<int> NdiLibraryGuard::refCount_{0};
 std::mutex NdiLibraryGuard::initMutex_;
 bool NdiLibraryGuard::initialized_ = false;
+const NDIlib_v6* NdiLibraryGuard::p_ndi_lib_ = nullptr;
+void* NdiLibraryGuard::lib_handle_ = nullptr;
+
+static void* PlatformLoadNdi() {
+    std::string lib_path;
+    const char* runtime_dir = getenv(NDILIB_REDIST_FOLDER);
+    if (runtime_dir) {
+#ifdef _WIN32
+        lib_path = std::string(runtime_dir) + "\\" + NDILIB_LIBRARY_NAME;
+#else
+        lib_path = std::string(runtime_dir) + "/" + NDILIB_LIBRARY_NAME;
+#endif
+    } else {
+        lib_path = NDILIB_LIBRARY_NAME;
+    }
+
+#ifdef _WIN32
+    return static_cast<void*>(LoadLibraryA(lib_path.c_str()));
+#else
+    return dlopen(lib_path.c_str(), RTLD_LOCAL | RTLD_LAZY);
+#endif
+}
+
+static const NDIlib_v6* PlatformResolveVtable(void* handle) {
+    if (!handle) return nullptr;
+    using LoadFn = const NDIlib_v6* (*)(void);
+    LoadFn fn = nullptr;
+#ifdef _WIN32
+    *reinterpret_cast<FARPROC*>(&fn) =
+        GetProcAddress(static_cast<HMODULE>(handle), "NDIlib_v6_load");
+#else
+    *reinterpret_cast<void**>(&fn) = dlsym(handle, "NDIlib_v6_load");
+#endif
+    return fn ? fn() : nullptr;
+}
+
+static void PlatformUnloadNdi(void* handle) {
+    if (!handle) return;
+#ifdef _WIN32
+    FreeLibrary(static_cast<HMODULE>(handle));
+#else
+    dlclose(handle);
+#endif
+}
 
 bool NdiLibraryGuard::EnsureInitialized() {
     std::lock_guard<std::mutex> lock(initMutex_);
@@ -14,9 +68,22 @@ bool NdiLibraryGuard::EnsureInitialized() {
         refCount_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
-    if (!NDIlib_initialize()) {
+
+    lib_handle_ = PlatformLoadNdi();
+    p_ndi_lib_ = PlatformResolveVtable(lib_handle_);
+    if (!p_ndi_lib_) {
+        PlatformUnloadNdi(lib_handle_);
+        lib_handle_ = nullptr;
         return false;
     }
+
+    if (!p_ndi_lib_->initialize()) {
+        PlatformUnloadNdi(lib_handle_);
+        lib_handle_ = nullptr;
+        p_ndi_lib_ = nullptr;
+        return false;
+    }
+
     initialized_ = true;
     refCount_.store(1, std::memory_order_relaxed);
     return true;
@@ -27,22 +94,28 @@ void NdiLibraryGuard::Shutdown() {
     if (!initialized_) return;
     int prev = refCount_.fetch_sub(1, std::memory_order_acq_rel);
     if (prev <= 1) {
-        NDIlib_destroy();
+        if (p_ndi_lib_) p_ndi_lib_->destroy();
+        p_ndi_lib_ = nullptr;
+        PlatformUnloadNdi(lib_handle_);
+        lib_handle_ = nullptr;
         initialized_ = false;
     }
 }
+
+// --- NdiSender ---
 
 NdiSender::NdiSender(const std::string& sourceName, bool clockVideo, bool clockAudio)
     : sourceName_(sourceName), instance_(nullptr) {
     if (!NdiLibraryGuard::EnsureInitialized()) {
         return;
     }
+    const NDIlib_v6* lib = NdiLibraryGuard::GetLib();
     NDIlib_send_create_t desc = {};
     desc.p_ndi_name = sourceName_.c_str();
     desc.p_groups = nullptr;
     desc.clock_video = clockVideo;
     desc.clock_audio = clockAudio;
-    instance_ = NDIlib_send_create(&desc);
+    instance_ = lib->send_create(&desc);
 }
 
 NdiSender::~NdiSender() {
@@ -53,9 +126,12 @@ NdiSender::~NdiSender() {
 void NdiSender::Reset() {
     std::lock_guard<std::mutex> lock(sendMutex_);
     if (instance_) {
-        // Sync the async send pipeline before destroying.
-        NDIlib_send_send_video_v2(instance_, nullptr);
-        NDIlib_send_destroy(instance_);
+        const NDIlib_v6* lib = NdiLibraryGuard::GetLib();
+        if (lib) {
+            // Flush any pending async sends before destroying.
+            lib->send_send_video_v2(instance_, nullptr);
+            lib->send_destroy(instance_);
+        }
         instance_ = nullptr;
     }
 }
@@ -75,6 +151,8 @@ bool NdiSender::SendVideo(
 
     std::lock_guard<std::mutex> lock(sendMutex_);
     if (!instance_) return false;
+    const NDIlib_v6* lib = NdiLibraryGuard::GetLib();
+    if (!lib) return false;
 
     NDIlib_video_frame_v2_t frame = {};
     frame.xres = width;
@@ -90,10 +168,7 @@ bool NdiSender::SendVideo(
     frame.p_metadata = nullptr;
     (void)dataSize;
 
-    // Synchronous send: by the time this returns, NDI has copied/queued the frame
-    // and the caller may free the buffer. This is the safest path when we don't
-    // own the frame lifetime (Chromium VideoFrame is closed after the JS call).
-    NDIlib_send_send_video_v2(instance_, &frame);
+    lib->send_send_video_v2(instance_, &frame);
     return true;
 }
 
@@ -109,6 +184,8 @@ bool NdiSender::SendAudio(
 
     std::lock_guard<std::mutex> lock(sendMutex_);
     if (!instance_) return false;
+    const NDIlib_v6* lib = NdiLibraryGuard::GetLib();
+    if (!lib) return false;
 
     NDIlib_audio_frame_v3_t frame = {};
     frame.sample_rate = sampleRate;
@@ -122,7 +199,7 @@ bool NdiSender::SendAudio(
         : numSamples * static_cast<int>(sizeof(float));
     frame.p_metadata = nullptr;
 
-    NDIlib_send_send_audio_v3(instance_, &frame);
+    lib->send_send_audio_v3(instance_, &frame);
     return true;
 }
 
