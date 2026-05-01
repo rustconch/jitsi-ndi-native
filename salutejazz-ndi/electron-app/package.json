@@ -1,0 +1,32 @@
+{
+  "name": "salutejazz-ndi-electron",
+  "version": "0.1.0",
+  "description": "Electron POC: joins a SaluteJazz room and republishes every participant + screen share as a separate NDI source",
+  "main": "dist/main.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "webpack --config webpack.renderer.cjs --mode development",
+    "build": "npm run build:main && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "start:headless": "npm run build && electron . --headless",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@salutejs/jazz-sdk-web": "^26.11.23",
+    "@salutejs/jazz-sdk-web-plugins": "^26.11.23",
+    "@salutejs/jazz-sdk-electron": "^26.11.23",
+    "@salutejs/jazz-sdk-electron-plugins": "^26.11.23",
+    "salutejazz-ndi-bridge": "file:../native-ndi-bridge"
+  },
+  "devDependencies": {
+    "electron": "^38.7.2",
+    "typescript": "^5.4.0",
+    "webpack": "^5.94.0",
+    "webpack-cli": "^5.1.4",
+    "ts-loader": "^9.5.1",
+    "html-webpack-plugin": "^5.6.0",
+    "rimraf": "^5.0.5",
+    "@types/node": "^20.11.0"
+  },
+  "license": "MIT"
+}
