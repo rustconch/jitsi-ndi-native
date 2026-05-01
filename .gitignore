@@ -10,3 +10,7 @@ last_jitsi_answer.sdp
 *.rtp
 *.log
 run.log
+
+# Local build helper symlink to "NDI 6 SDK" without spaces (so node-gyp's
+# Makefile doesn't choke on the space in the include path).
+/NDI6SDK
