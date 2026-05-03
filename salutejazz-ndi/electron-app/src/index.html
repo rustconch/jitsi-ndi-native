@@ -103,7 +103,7 @@
     <main>
       <section class="config">
         <label for="serverUrl">Server URL</label>
-        <input id="serverUrl" placeholder="https://salutejazz.sberdevices.ru" value="https://salutejazz.sberdevices.ru" />
+        <input id="serverUrl" placeholder="https://salutejazz.ru" value="https://salutejazz.ru" />
 
         <label for="sdkKey">SDK Key (base64 JSON)</label>
         <textarea id="sdkKey" placeholder="вставьте SDK Key из developers.sber.ru..."></textarea>
@@ -114,11 +114,11 @@
         <label for="userId">Stable user id (sub)</label>
         <input id="userId" placeholder="напр. ndi-bridge-1" value="ndi-bridge-1" />
 
-        <label for="roomId">Room ID</label>
-        <input id="roomId" placeholder="ID комнаты" />
+        <label for="roomId">Room ID <span style="color:#7c869c;font-weight:400">(из URL: /calls/<b>XXXX</b>)</span></label>
+        <input id="roomId" placeholder="напр. 28zrlx" />
 
-        <label for="password">Room Password</label>
-        <input id="password" placeholder="пароль (если есть)" />
+        <label for="password">Room Password <span style="color:#7c869c;font-weight:400">(из URL: ?psw=<b>...</b>)</span></label>
+        <input id="password" placeholder="пароль из ссылки" />
 
         <label>
           <input id="enableNdi" type="checkbox" checked /> отправлять в NDI (если выключено — только лог)

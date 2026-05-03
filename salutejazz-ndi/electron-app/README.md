@@ -44,11 +44,14 @@ npm run start:headless
 
 1. Запускаем `npm run start`.
 2. В UI вписываем:
-   - Server URL — `https://salutejazz.sberdevices.ru` (или on-prem URL).
+   - Server URL — `https://salutejazz.ru` (или on-prem URL).
    - SDK Key — base64-строку (как показано на developers.sber.ru).
    - Имя в комнате — будет видно другим участникам.
    - Stable user id — любой stable идентификатор для JWT `sub`.
-   - Room ID + Password — куда подключаемся.
+   - Room ID + Password — берутся из ссылки на конференцию вида
+     `https://salutejazz.ru/calls/<RoomID>?psw=<Password>`.
+     Например для `https://salutejazz.ru/calls/28zrlx?psw=ABCxyz` →
+     Room ID = `28zrlx`, Password = `ABCxyz`.
 3. Жмём "Войти и публиковать".
 4. По мере того как участники появляются в комнате, в правом нижнем блоке
    появляются NDI-источники: `SaluteJazz NDI - <Имя>` и
