@@ -32,6 +32,9 @@ $script:fontCollection = $null
 $script:fontFamily = $null
 $script:logoFontFamily = $null
 $script:statusRunning = $false
+$script:nativeLogWriter = $null
+$script:stdoutSub = $null
+$script:stderrSub = $null
 
 function Color-Hex {
     param([string]$Hex)
@@ -266,14 +269,28 @@ function Stop-NativeProcess {
     try {
         $script:isStopping = $true
         if ($script:proc -and -not $script:proc.HasExited) {
-            Append-Log "[GUI] Stopping native process tree... $Reason"
-            # Since we launch via cmd.exe, we must kill the entire tree to stop the native app.
-            $pidToKill = $script:proc.Id
-            Start-Process taskkill.exe -ArgumentList "/F", "/T", "/PID", $pidToKill -WindowStyle Hidden -Wait
+            Append-Log "[GUI] Stopping native process... $Reason"
+            try { $script:proc.Kill() } catch {}
+            try { $script:proc.WaitForExit(3000) | Out-Null } catch {}
         }
     } catch {
         Append-Log "[GUI] Stop failed: $($_.Exception.Message)"
     }
+
+    foreach ($sub in @($script:stdoutSub, $script:stderrSub)) {
+        if ($sub) {
+            try { Unregister-Event -SourceIdentifier $sub.Name -ErrorAction SilentlyContinue } catch {}
+            try { $sub | Remove-Job -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    $script:stdoutSub = $null
+    $script:stderrSub = $null
+    if ($script:nativeLogWriter) {
+        try { $script:nativeLogWriter.Flush() } catch {}
+        try { $script:nativeLogWriter.Dispose() } catch {}
+        $script:nativeLogWriter = $null
+    }
+
     Set-RunningUi $false
 }
 
@@ -312,25 +329,54 @@ function Start-Click {
         $arguments = Join-ProcessArgs $argsList
         $script:lastCommand = (Quote-Arg $exe) + ' ' + $arguments
 
-        # Use cmd.exe to launch the native app and pipe all output to the single log file 2>&1
-        $cmdArgs = '/c "{0} > ""{1}"" 2>&1"' -f $script:lastCommand, $nativeLogFile
-        
+        # Launch the native exe directly. Going through cmd.exe /c "exe > log 2>&1"
+        # used to break NDI sources in the portable build whenever the install path
+        # contained spaces, because cmd's quote/redirect parsing dropped the exe name.
+        $nativeDir = Split-Path -Parent $exe
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = 'cmd.exe'
-        $psi.Arguments = $cmdArgs
-        $psi.WorkingDirectory = Split-Path -Parent $exe
+        $psi.FileName = $exe
+        $psi.Arguments = $arguments
+        $psi.WorkingDirectory = $nativeDir
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        # Make local runtime DLLs (Processing.NDI.Lib.x64.dll, ffmpeg, datachannel, ...)
+        # discoverable on machines without NDI Runtime / vcpkg installed globally.
+        try {
+            $oldPathForProcess = $psi.EnvironmentVariables['PATH']
+            if ([string]::IsNullOrWhiteSpace($oldPathForProcess)) { $oldPathForProcess = $env:PATH }
+            $psi.EnvironmentVariables['PATH'] = $nativeDir + ';' + $script:repoRoot + ';' + $oldPathForProcess
+        } catch {}
 
         $p = New-Object System.Diagnostics.Process
         $p.StartInfo = $psi
+        $p.EnableRaisingEvents = $true
+
+        $logWriter = New-Object System.IO.StreamWriter($nativeLogFile, $true, [System.Text.Encoding]::UTF8)
+        $logWriter.AutoFlush = $true
+        $script:nativeLogWriter = $logWriter
+
+        $writeHandler = {
+            param($s, $e)
+            try {
+                if ($null -ne $e.Data -and $null -ne $Event.MessageData) {
+                    $Event.MessageData.WriteLine($e.Data)
+                }
+            } catch {}
+        }
+        $script:stdoutSub = Register-ObjectEvent -InputObject $p -EventName OutputDataReceived -Action $writeHandler -MessageData $logWriter
+        $script:stderrSub = Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived  -Action $writeHandler -MessageData $logWriter
+
         if (-not $p.Start()) { throw 'Process.Start failed.' }
-        
+        $p.BeginOutputReadLine()
+        $p.BeginErrorReadLine()
+
         $script:proc = $p
         $script:nativeStartedAt = Get-Date
         $script:isStopping = $false
         Set-RunningUi $true
-        Append-Log "[GUI] Started native process via cmd. Output written to $nativeLogFile. PID=$($p.Id)"
+        Append-Log "[GUI] Started native process. Output written to $nativeLogFile. PID=$($p.Id)"
     } catch {
         Append-Log "[GUI] Start failed: $($_.Exception.Message)"
         Set-RunningUi $false
@@ -609,8 +655,8 @@ $timer.Add_Tick({
     try {
         if ($script:proc) {
             if ($script:proc.HasExited) {
+                Stop-NativeProcess 'native exited'
                 $script:proc = $null
-                Set-RunningUi $false
             }
         }
     } catch {}
