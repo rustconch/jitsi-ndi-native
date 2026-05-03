@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>SaluteJazz → NDI</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
+      background: #0d111c;
+      color: #d6dbe6;
+    }
+    .root {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+    }
+    header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #1d2230;
+      display: flex; align-items: center; gap: 14px;
+    }
+    h1 {
+      font-size: 14px; margin: 0; font-weight: 600;
+      color: #92e0ff;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      min-height: 0;
+    }
+    .config {
+      padding: 18px;
+      border-right: 1px solid #1d2230;
+      overflow-y: auto;
+    }
+    label {
+      display: block; margin-top: 12px; font-size: 11px;
+      color: #7c869c; text-transform: uppercase; letter-spacing: .04em;
+    }
+    input, textarea {
+      width: 100%; margin-top: 4px;
+      background: #11162a; color: #d6dbe6;
+      border: 1px solid #232a3d; border-radius: 6px;
+      padding: 7px 9px; font: inherit;
+    }
+    textarea { font-family: ui-monospace, monospace; min-height: 100px; resize: vertical; }
+    button {
+      margin-top: 16px;
+      background: #1d6aff; color: white;
+      border: 0; padding: 9px 14px; border-radius: 6px;
+      font: inherit; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    button.secondary { background: #232a3d; }
+    .status { padding: 8px 12px; background: #11162a; border-radius: 6px; margin-top: 12px; }
+    .status .ok { color: #7be0a3; }
+    .status .err { color: #ff6c6c; }
+    .log {
+      padding: 12px 18px;
+      overflow-y: auto;
+      font: 12px ui-monospace, monospace;
+    }
+    .log .row { padding: 2px 0; white-space: pre-wrap; word-break: break-word; }
+    .log .info { color: #92e0ff; }
+    .log .warn { color: #ffb84d; }
+    .log .error { color: #ff6c6c; }
+    .log .stream { color: #7be0a3; }
+    .sources {
+      padding: 12px 18px;
+      border-top: 1px solid #1d2230;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .source-card {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
+      background: #11162a;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .source-card .badge {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      background: #1d6aff; color: white; font-size: 10px;
+    }
+    .source-card .badge.audio { background: #5b8cff; }
+    .source-card .badge.video { background: #1d6aff; }
+    .source-card .badge.display { background: #ff6c6c; }
+  </style>
+</head>
+<body>
+  <div class="root">
+    <header>
+      <h1>SaluteJazz → NDI bridge</h1>
+      <span id="conn-status" style="color:#7c869c">не подключено</span>
+    </header>
+    <main>
+      <section class="config">
+        <label for="serverUrl">Server URL</label>
+        <input id="serverUrl" placeholder="https://salutejazz.ru" value="https://salutejazz.ru" />
+
+        <label for="sdkKey">SDK Key (base64 JSON)</label>
+        <textarea id="sdkKey" placeholder="вставьте SDK Key из developers.sber.ru..."></textarea>
+
+        <label for="userName">Имя в комнате</label>
+        <input id="userName" value="NDI Bridge" />
+
+        <label for="userId">Stable user id (sub)</label>
+        <input id="userId" placeholder="напр. ndi-bridge-1" value="ndi-bridge-1" />
+
+        <label for="roomId">Room ID <span style="color:#7c869c;font-weight:400">(из URL: /calls/<b>XXXX</b>)</span></label>
+        <input id="roomId" placeholder="напр. 28zrlx" />
+
+        <label for="password">Room Password <span style="color:#7c869c;font-weight:400">(из URL: ?psw=<b>...</b>)</span></label>
+        <input id="password" placeholder="пароль из ссылки" />
+
+        <label>
+          <input id="enableNdi" type="checkbox" checked /> отправлять в NDI (если выключено — только лог)
+        </label>
+
+        <button id="join">Войти и публиковать</button>
+        <button id="leave" class="secondary" disabled>Покинуть</button>
+
+        <div class="status" id="status">готов</div>
+      </section>
+
+      <section style="display: grid; grid-template-rows: 1fr auto; min-height: 0;">
+        <div class="log" id="log"></div>
+        <div class="sources" id="sources">
+          <div style="color:#7c869c; font-size:11px; text-transform:uppercase">NDI sources</div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
